@@ -55,7 +55,7 @@ metadata:
   name: vllm-runtime
 spec:
   supportedModelFormats:
-    - name: pytorch
+    - name: vLLM
       version: "1"
       autoSelect: true
   containers:

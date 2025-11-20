@@ -5,4 +5,3 @@
 * xref:workshop/llm-d/04-module-02.adoc[Module 2: Deploy Model with vLLM & Benchmark]
 * xref:workshop/llm-d/05-module-03.adoc[Module 3: Scale vLLM & Compare Performance]
 * xref:workshop/llm-d/06-module-04.adoc[Module 4: Deploy llm-d & Benchmark]
-* xref:workshop/llm-d/07-module-05.adoc[Module 5: Recap & Customer Value]
