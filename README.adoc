@@ -1,6 +1,6 @@
 === Getting Started
 
-This template is designed to be used as a base for your showroom lab guides.
+This template is designed to be used as a base for your showroom lab guides. edit
 
 The content is built using Antora, a static site generator for creating documentation sites from AsciiDoc documents.
 
