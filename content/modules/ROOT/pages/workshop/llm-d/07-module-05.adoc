@@ -1,0 +1,431 @@
+= Module 5: Recap & Customer Value
+:source-highlighter: rouge
+:toc: macro
+:toclevels: 2
+
+You've completed a comprehensive evaluation of llm-d for distributed LLM inference. Now it's time to synthesize your findings, connect technical results to business value, and prepare to present your recommendation to ParasolCloud leadership.
+
+In this module, you'll recap your journey, practice customer-facing messaging, and understand deployment patterns for production llm-d adoption.
+
+== Learning objectives
+By the end of this module, you'll be able to:
+
+* Synthesize technical findings into clear business recommendations
+* Articulate llm-d value proposition for different customer scenarios
+* Explain deployment patterns and production considerations
+* Connect performance improvements to cost savings and customer experience
+* Identify appropriate use cases for llm-d adoption
+
+== Your journey recap
+
+=== What you built and measured
+
+Over the past 2 hours, you've deployed and benchmarked three configurations:
+
+**Module 2 - Single GPU Baseline**:
+* Deployed Llama 3.1 8B with vLLM on 1 GPU
+* Measured: 50 req/s throughput, 900ms P95 TTFT
+* Established performance baseline
+
+**Module 3 - Naive 4 GPU Scaling**:
+* Scaled to 4 independent vLLM instances
+* Implemented round-robin load balancing
+* Measured: 170 req/s throughput (3.4x improvement)
+* Observed: Low cache efficiency (~10% hit rate), minimal latency improvement
+
+**Module 4 - llm-d with 4 GPUs**:
+* Deployed llm-d with Precise Prefix Cache Aware Routing
+* Orchestrated same 4 vLLM instances intelligently
+* Measured: 260 req/s throughput (5.2x improvement)
+* Observed: High cache efficiency (~70% hit rate), 35% latency improvement
+
+=== Key technical insights
+
+**The problem with naive scaling**:
+Each vLLM instance maintains an isolated KV cache. When requests with similar prefixes are distributed randomly across instances, every instance recomputes the shared prefix. For ParasolCloud's workload (300-token system prompt), this meant 300 tokens of wasted computation per request across most instances.
+
+**How llm-d solves it**:
+llm-d analyzes incoming prompts, computes prefix similarity, and routes requests with similar prefixes to the same backend instance. This maximizes KV cache reuse, eliminating redundant computation. The result: super-linear scaling (5.2x throughput with 4 GPUs instead of theoretical 4x).
+
+**The cache multiplier effect**:
+70% cache hit rate on 300-token prefix means:
+* Without cache: 375 tokens computed (300 system + 75 user query)
+* With cache: 75 tokens computed (cache reuses 300-token prefix)
+* Speedup: 5x faster prefill for cached requests
+* Aggregate impact: 53% more throughput on same hardware
+
+== Connecting to business value
+
+=== ParasolCloud's business case
+
+Recall ParasolCloud's challenge: Scale AI-powered customer service from 500 to 5,000 concurrent users (10x traffic growth) in 90 days.
+
+**Your recommendation**:
+
+[source,text]
+----
+=== Recommendation: Deploy llm-d for 33% Cost Savings ===
+
+Business requirement:
+- Scale from 50 req/s (current) to 500 req/s (target)
+- Timeline: 90 days for client expansion launch
+- Constraint: Minimize infrastructure investment
+
+Technical findings:
+- Single GPU: 50 req/s (insufficient)
+- 4 GPUs (naive scaling): 170 req/s (requires 12 total GPUs for 500 req/s)
+- 4 GPUs (llm-d): 260 req/s (requires 8 total GPUs for 500 req/s)
+
+Financial impact:
+- Naive approach: 12 GPUs × $10k/year = $120k/year
+- llm-d approach: 8 GPUs × $10k/year = $80k/year
+- Savings: $40k/year (33% reduction)
+
+Customer experience impact:
+- Naive P95 latency: ~1100ms
+- llm-d P95 latency: ~700ms
+- Improvement: 36% faster response times
+
+Recommendation:
+Deploy llm-d to achieve target capacity with 8 GPUs instead of 12,
+saving $40k annually while delivering 36% better latency.
+
+Implementation timeline:
+- Week 1-2: Deploy llm-d, configure backends, validate performance
+- Week 3-4: Load testing and optimization
+- Week 5-6: Production rollout with gradual traffic migration
+- Total: 6 weeks (well within 90-day window)
+----
+
+=== Cost-benefit analysis
+
+Create a simple cost comparison:
+
+[cols="3,2,2,2", options="header"]
+|===
+|Approach |GPUs Required |Annual Cost |P95 Latency
+
+|**Naive vLLM scaling**
+|12
+|$120,000
+|1100ms
+
+|**llm-d intelligent scaling**
+|8
+|$80,000
+|700ms
+
+|**Savings**
+|4 fewer (33%)
+|$40,000 (33%)
+|400ms faster (36%)
+|===
+
+**Additional benefits beyond cost**:
+* **Operational simplicity**: 8 GPUs vs. 12 to manage, monitor, and maintain
+* **Better GPU utilization**: 75% avg utilization vs. 60% with naive scaling
+* **Improved user experience**: More consistent latency, faster responses
+* **Headroom for growth**: 520 req/s capacity vs. 510 req/s (more buffer)
+* **Energy efficiency**: Fewer GPUs = lower power consumption and carbon footprint
+
+== Customer-facing messaging
+
+Practice articulating llm-d value for different audiences.
+
+=== For technical decision-makers
+
+**Scenario**: You're presenting to ParasolCloud's VP of Engineering.
+
+**Key message**:
+"llm-d enables super-linear scaling for LLM inference through intelligent cache-aware routing. For workloads with shared prefixes—like our customer service chatbot with a 300-token system prompt—llm-d delivers 5.2x throughput with 4 GPUs instead of the theoretical 4x. This means we can hit our 500 req/s target with 8 GPUs instead of 12, saving $40k annually while improving P95 latency by 36%."
+
+**Technical points to emphasize**:
+* Cache hit rates: 70% vs. 10% (naive)
+* Prefix-aware routing eliminates redundant computation
+* Works with existing vLLM infrastructure (low risk)
+* Quantified improvement: 53% more throughput on same hardware
+* Production-ready with comprehensive monitoring
+
+=== For business executives
+
+**Scenario**: You're presenting to ParasolCloud's CFO and COO.
+
+**Key message**:
+"To support our client expansion, we need to scale our AI platform 10x. Traditional scaling would require 12 GPUs at $120k annually. By deploying llm-d—an intelligent orchestration layer—we achieve the same capacity with 8 GPUs at $80k annually, saving $40k per year. Additionally, customers experience 36% faster response times, improving satisfaction and reducing churn."
+
+**Business points to emphasize**:
+* 33% cost reduction ($40k/year savings)
+* Faster time-to-value (6-week deployment vs. 8-10 weeks for larger cluster)
+* Better customer experience (36% faster responses)
+* Lower operational complexity (fewer GPUs to manage)
+* Immediate ROI (savings start on day 1)
+
+=== For platform/operations teams
+
+**Scenario**: You're explaining llm-d to the team who will operate it.
+
+**Key message**:
+"llm-d sits in front of our vLLM instances and routes requests intelligently based on KV cache state. Instead of random load balancing, it sends similar prompts to the same backend, maximizing cache reuse. For us, that means we can serve 500 req/s with 8 GPUs instead of 12. Operationally, llm-d provides a single control plane with comprehensive metrics, making it easier to monitor and debug than managing many independent vLLM instances."
+
+**Operational points to emphasize**:
+* Single endpoint to manage (llm-d) vs. many vLLM instances
+* Grafana dashboard shows cache hit rates, routing decisions, backend health
+* Compatible with existing vLLM deployments (no model changes)
+* Scales linearly: Add more vLLM backends as needed
+* Minimal latency overhead (<5ms) from routing layer
+
+== Use cases and deployment patterns
+
+=== When llm-d provides high value
+
+**1. High-traffic multi-tenant LLM services (MaaS)**
+* Example: Platform serving LLMs to 100+ customers
+* Why: Different customers often use similar system prompts or templates
+* Expected improvement: 40-60% throughput increase
+
+**2. Chat and agent platforms with system prompts**
+* Example: Customer service chatbots, AI assistants
+* Why: System prompt (100-500 tokens) shared across all user sessions
+* Expected improvement: 50-70% throughput increase
+* This is ParasolCloud's use case
+
+**3. RAG applications with shared context**
+* Example: Document Q&A where multiple users query same documents
+* Why: Document context (1000-4000 tokens) shared across queries
+* Expected improvement: 60-80% throughput increase
+
+**4. Code generation with project context**
+* Example: AI coding assistants with codebase context
+* Why: Project structure and imports (500-2000 tokens) shared
+* Expected improvement: 40-60% throughput increase
+
+=== When llm-d provides moderate value
+
+**5. Mixed workloads with partial prefix overlap**
+* Example: General-purpose LLM API with diverse applications
+* Why: Some prefix overlap but not consistent
+* Expected improvement: 20-40% throughput increase
+
+**6. Long-context applications**
+* Example: Document summarization, legal analysis (8K+ token inputs)
+* Why: Prefill/decode disaggregation optimizes resource usage
+* Expected improvement: 30-50% latency reduction
+
+=== When llm-d may NOT be necessary
+
+**7. Batch/offline inference**
+* Example: Overnight data processing jobs
+* Why: No latency requirements, can use simpler scheduling
+* llm-d benefit: Minimal (5-10%)
+
+**8. Completely unique prompts**
+* Example: Creative writing with no shared templates
+* Why: No prefix overlap to cache
+* llm-d benefit: None (0-5%)
+
+**9. Very low traffic (<10 req/s)**
+* Example: Internal tools with few users
+* Why: Single vLLM instance sufficient
+* llm-d benefit: Overhead outweighs benefit
+
+== Production deployment patterns
+
+=== Deployment pattern 1: Gradual migration
+
+**Best for**: Risk-averse organizations, production services
+
+**Approach**:
+1. Deploy llm-d alongside existing infrastructure
+2. Route 10% of traffic to llm-d
+3. Monitor performance and stability for 1 week
+4. Gradually increase traffic (25%, 50%, 75%, 100%)
+5. Deprecate old load balancer once llm-d proven
+
+**Timeline**: 4-6 weeks
+
+**Risk**: Low (easy rollback at any step)
+
+=== Deployment pattern 2: Shadow mode testing
+
+**Best for**: High-reliability requirements, critical services
+
+**Approach**:
+1. Deploy llm-d in "shadow" mode
+2. Duplicate traffic to both llm-d and existing system
+3. Compare results for 2-4 weeks (don't serve llm-d responses yet)
+4. Validate correctness and performance
+5. Switch to llm-d once validated
+
+**Timeline**: 6-8 weeks
+
+**Risk**: Very low (no impact on production)
+
+=== Deployment pattern 3: Greenfield deployment
+
+**Best for**: New services, non-production environments
+
+**Approach**:
+1. Deploy llm-d as primary inference layer from day 1
+2. Configure vLLM backends
+3. Test and launch
+
+**Timeline**: 1-2 weeks
+
+**Risk**: Low for new services (no migration complexity)
+
+=== High-availability considerations
+
+For production deployments, consider:
+
+**llm-d redundancy**:
+* Deploy 2-3 llm-d replicas behind a load balancer
+* llm-d is stateless, easy to scale horizontally
+* Backend state stored in vLLM instances
+
+**Backend health checking**:
+* llm-d continuously probes backend health
+* Automatically routes around failed backends
+* Configure health check intervals (default: 30s)
+
+**Monitoring and alerting**:
+* Alert on cache hit rate degradation (<40%)
+* Alert on backend failures
+* Monitor P95 latency against SLOs
+
+**Graceful degradation**:
+* If llm-d fails, fall back to direct vLLM endpoints
+* Load balancer health checks ensure automatic failover
+* Document rollback procedures
+
+== Advanced llm-d capabilities
+
+Beyond what you've explored today, llm-d supports:
+
+=== Prefill/Decode disaggregation
+
+**What**: Separate vLLM instances for prefill (prompt processing) and decode (token generation)
+
+**When**: Long contexts (8K+ tokens), batch-heavy workloads
+
+**Benefit**: 40-60% better GPU utilization per phase
+
+**Configuration**: Split backends into prefill and decode groups in llm-d config
+
+=== Wide Expert Parallelism (MoE models)
+
+**What**: Distribute MoE experts across devices with data parallelism
+
+**When**: Large MoE models (DeepSeek R1, Mixtral, Grok)
+
+**Benefit**: Reduce inter-device communication, scale to 100+ experts
+
+**Configuration**: Set expert parallelism and data parallelism degrees in backend config
+
+=== Multi-model serving
+
+**What**: Single llm-d instance routing to multiple different models
+
+**When**: Multi-model platforms, A/B testing
+
+**Benefit**: Unified endpoint for multiple models
+
+**Configuration**: Add multiple model backends with model identifiers
+
+=== Custom routing policies
+
+**What**: Extend llm-d routing beyond prefix similarity
+
+**When**: Specialized use cases (user-based routing, cost-based routing)
+
+**Benefit**: Flexibility for advanced scenarios
+
+**Configuration**: Implement custom routing plugin (requires development)
+
+== Next steps for ParasolCloud
+
+=== Immediate actions (Week 1-2)
+
+□ **Socialize findings with stakeholders**: Present this analysis to VP Engineering and CFO
+□ **Secure GPU resources**: Provision 8 GPU nodes for llm-d deployment
+□ **Set up staging environment**: Deploy llm-d in pre-production for validation
+□ **Train operations team**: Workshop on llm-d deployment and monitoring
+
+=== Short-term actions (Week 3-6)
+
+□ **Production deployment**: Gradual migration following pattern 1 (gradual rollout)
+□ **Performance validation**: Confirm 500+ req/s capacity under production load
+□ **Monitoring setup**: Configure alerts for cache hit rate, latency, backend health
+□ **Documentation**: Create runbooks for common operations and troubleshooting
+
+=== Long-term actions (Month 2-3)
+
+□ **Optimization**: Tune llm-d configuration based on production workload
+□ **Capacity planning**: Model future growth and GPU requirements
+□ **Advanced features**: Evaluate prefill/decode disaggregation for long contexts
+□ **Cost tracking**: Validate $40k annual savings realized
+
+== Workshop conclusion
+
+**What you've accomplished today**:
+
+* **Technical mastery**: Deployed and benchmarked three LLM inference configurations
+* **Quantified value**: Measured 53% throughput improvement and 33% cost savings
+* **Hands-on experience**: Worked with vLLM, llm-d, KServe, Grafana, and GuideLLM
+* **Business acumen**: Connected technical metrics to business outcomes
+
+**Key takeaways**:
+
+1. **Naive scaling is inefficient**: 4 GPUs deliver only 3.4x throughput (85% efficiency)
+2. **Intelligent routing enables super-linear scaling**: llm-d delivers 5.2x throughput (130% efficiency)
+3. **Cache is the multiplier**: 70% cache hit rate = 3x less redundant computation
+4. **Business impact is measurable**: 33% cost savings, 36% latency improvement
+5. **Deployment is straightforward**: Production-ready in 4-6 weeks
+
+**Your recommendation for ParasolCloud**:
+
+Deploy llm-d with Precise Prefix Cache Aware Routing to achieve:
+* **Target capacity**: 500+ req/s for client expansion
+* **Hardware efficiency**: 8 GPUs instead of 12 (33% reduction)
+* **Cost savings**: $40k annually
+* **Better UX**: 700ms P95 latency (36% faster)
+* **Timeline**: 6-week deployment fits within 90-day window
+
+**Call to action**:
+
+You now have the data, experience, and messaging to advocate for llm-d adoption. Whether at ParasolCloud or your own organization, you can:
+
+1. Identify workloads with shared prefixes
+2. Quantify potential improvements with benchmarks
+3. Build a business case with cost and performance data
+4. Deploy llm-d to unlock super-linear scaling
+
+**Thank you for participating in this workshop!**
+
+== Additional resources
+
+**Documentation**:
+* llm-d GitHub: https://github.com/red-hat-data-services/llm-d
+* vLLM documentation: https://docs.vllm.ai/
+* OpenShift AI: https://access.redhat.com/documentation/en-us/red_hat_openshift_ai/
+
+**Benchmarking**:
+* GuideLLM: https://github.com/neuralmagic/guidellm
+* vLLM benchmarking guide: https://docs.vllm.ai/en/latest/performance/benchmarking.html
+
+**Community**:
+* OpenShift AI community: https://developers.redhat.com/products/openshift-ai/overview
+* vLLM GitHub discussions: https://github.com/vllm-project/vllm/discussions
+
+**Contact**:
+* Workshop feedback: ai-workshops@redhat.com
+* Technical support: openshift-ai-support@redhat.com
+
+**Certifications and training**:
+* Red Hat Certified Specialist in OpenShift AI
+* Advanced LLM deployment and optimization courses
+
+---
+
+**Final thought**:
+
+Distributed LLM inference is not just about adding more GPUs—it's about making each GPU work smarter. llm-d represents a well-lit path to production-ready, cost-efficient, high-performance LLM serving. You've proven the value with real data. Now go build something amazing.

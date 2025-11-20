@@ -1,0 +1,481 @@
+= Module 2: Deploy Model with vLLM & Benchmark
+:source-highlighter: rouge
+:toc: macro
+:toclevels: 2
+
+Now it's time to establish your performance baseline. Before evaluating llm-d's improvements, you need quantifiable metrics from a single-GPU vLLM deployment.
+
+In this module, you'll deploy Llama 3.1 8B with vLLM on a single GPU using KServe in OpenShift AI, configure monitoring, and run comprehensive benchmarks with GuideLLM.
+
+== Learning objectives
+By the end of this module, you'll be able to:
+
+* Deploy a generative AI model using KServe and vLLM ServingRuntime in OpenShift AI
+* Configure Grafana dashboard to collect vLLM performance metrics
+* Execute GuideLLM benchmarks to measure TTFT, ITL, and throughput
+* Analyze results to identify single-instance performance limits
+
+== Exercise 1: Deploy vLLM InferenceService
+
+ParasolCloud needs a baseline measurement of single-GPU inference performance. You'll deploy Llama 3.1 8B Instruct on one GPU to establish this baseline.
+
+=== Verify your environment
+
+First, confirm your OpenShift AI environment is ready:
+
+[source,bash]
+----
+# Verify you're logged into OpenShift
+oc whoami
+
+# Check your assigned namespace
+oc project
+
+# Verify GPU nodes are available
+oc get nodes -l nvidia.com/gpu.present=true
+
+# Check GPU quota in your namespace
+oc get resourcequota
+----
+
+Expected output: Your username, namespace, GPU nodes listed, and GPU quota showing available resources.
+
+=== Create the vLLM ServingRuntime
+
+KServe uses ServingRuntimes to define how models are served. You'll create a vLLM ServingRuntime configuration.
+
+Create a file named `vllm-runtime.yaml`:
+
+[source,bash]
+----
+cat > vllm-runtime.yaml << 'EOF'
+apiVersion: serving.kserve.io/v1alpha1
+kind: ServingRuntime
+metadata:
+  name: vllm-runtime
+spec:
+  supportedModelFormats:
+    - name: pytorch
+      version: "1"
+      autoSelect: true
+  containers:
+    - name: kserve-container
+      image: quay.io/modh/vllm:0.6.0-rocm
+      command:
+        - python
+        - -m
+        - vllm.entrypoints.openai.api_server
+      args:
+        - --model=$(MODEL_NAME)
+        - --port=8080
+        - --max-model-len=4096
+        - --gpu-memory-utilization=0.9
+      env:
+        - name: MODEL_NAME
+          value: "{{.modelName}}"
+        - name: HF_HOME
+          value: /tmp/hf_home
+      resources:
+        limits:
+          nvidia.com/gpu: "1"
+        requests:
+          nvidia.com/gpu: "1"
+EOF
+----
+
+Apply the ServingRuntime:
+
+[source,bash]
+----
+oc apply -f vllm-runtime.yaml
+----
+
+Verify the ServingRuntime was created:
+
+[source,bash]
+----
+oc get servingruntimes
+----
+
+=== Create the InferenceService
+
+Now deploy the Llama 3.1 8B model using the vLLM runtime.
+
+NOTE: If your environment requires HuggingFace authentication, create a secret first. If models are pre-cached, skip this step.
+
+Optional: Create HuggingFace token secret (if needed):
+
+[source,bash]
+----
+# Create secret with your HuggingFace token
+oc create secret generic hf-token \
+  --from-literal=HF_TOKEN=your_token_here
+----
+
+Create the InferenceService configuration:
+
+[source,bash]
+----
+cat > llama-vllm-single.yaml << 'EOF'
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: llama-vllm-single
+  annotations:
+    serving.kserve.io/deploymentMode: RawDeployment
+spec:
+  predictor:
+    model:
+      modelFormat:
+        name: pytorch
+      runtime: vllm-runtime
+      storageUri: hf://meta-llama/Meta-Llama-3.1-8B-Instruct
+      # If using PVC with pre-cached model, use:
+      # storageUri: pvc://model-cache/llama-3.1-8b
+EOF
+----
+
+If you created the HF token secret, add this to the spec:
+
+[source,yaml]
+----
+    env:
+      - name: HF_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: hf-token
+            key: HF_TOKEN
+----
+
+Apply the InferenceService:
+
+[source,bash]
+----
+oc apply -f llama-vllm-single.yaml
+----
+
+=== Monitor deployment progress
+
+Watch the InferenceService status:
+
+[source,bash]
+----
+# Watch InferenceService status
+oc get inferenceservice llama-vllm-single -w
+
+# In another terminal, watch pod creation
+oc get pods -l serving.kserve.io/inferenceservice=llama-vllm-single -w
+----
+
+The deployment will go through these states:
+1. **Unknown**: Initial state
+2. **InProgress**: Pod creating, model downloading
+3. **Ready**: Model loaded and serving
+
+This can take 5-10 minutes depending on model download speed.
+
+Check logs if there are issues:
+
+[source,bash]
+----
+# View container logs
+oc logs -l serving.kserve.io/inferenceservice=llama-vllm-single -f
+----
+
+=== Test the deployment
+
+Once the InferenceService shows `Ready`, test it:
+
+[source,bash]
+----
+# Get the inference URL
+INFERENCE_URL=$(oc get inferenceservice llama-vllm-single -o jsonpath='{.status.url}')
+echo $INFERENCE_URL
+
+# Test with curl
+curl -k ${INFERENCE_URL}/v1/models
+
+# Send a test request
+curl -k ${INFERENCE_URL}/v1/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+    "prompt": "San Francisco is a",
+    "max_tokens": 50,
+    "temperature": 0.7
+  }'
+----
+
+Expected output: JSON response with generated text completion.
+
+=== Troubleshooting
+
+**Issue**: InferenceService stuck in "Unknown" or "InProgress"
+**Solution**:
+[source,bash]
+----
+# Check pod status
+oc get pods -l serving.kserve.io/inferenceservice=llama-vllm-single
+
+# Check events
+oc get events --sort-by='.lastTimestamp' | grep llama-vllm-single
+
+# Common issues:
+# - Image pull: Check image name and pull secrets
+# - GPU quota: Verify GPU resources available
+# - Model download: Check HF_TOKEN if using gated models
+----
+
+**Issue**: Model download timeout
+**Solution**: Use pre-cached model from PVC or increase timeout in ServingRuntime.
+
+== Exercise 2: Configure Grafana monitoring
+
+To understand vLLM performance, you need metrics visualization. You'll configure a Grafana dashboard to track vLLM inference metrics.
+
+=== Expose vLLM metrics endpoint
+
+vLLM exposes Prometheus metrics on its metrics port. Verify the service is exposing metrics:
+
+[source,bash]
+----
+# Find the vLLM service
+oc get svc -l serving.kserve.io/inferenceservice=llama-vllm-single
+
+# Port-forward to test metrics endpoint
+oc port-forward svc/llama-vllm-single-predictor 8080:8080 &
+
+# Fetch metrics (in another terminal or after port-forward runs)
+curl http://localhost:8080/metrics | grep vllm
+
+# Stop port-forward
+pkill -f "port-forward"
+----
+
+You should see vLLM-specific metrics like:
+* `vllm:num_requests_running`
+* `vllm:num_requests_waiting`
+* `vllm:gpu_cache_usage_perc`
+* `vllm:avg_generation_throughput_toks_per_s`
+
+=== Create ServiceMonitor for Prometheus
+
+To collect vLLM metrics in Prometheus, create a ServiceMonitor:
+
+[source,bash]
+----
+cat > vllm-servicemonitor.yaml << 'EOF'
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: vllm-metrics
+spec:
+  selector:
+    matchLabels:
+      serving.kserve.io/inferenceservice: llama-vllm-single
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+EOF
+----
+
+Apply the ServiceMonitor:
+
+[source,bash]
+----
+oc apply -f vllm-servicemonitor.yaml
+----
+
+=== Access Grafana dashboard
+
+Your workshop environment should have a pre-configured Grafana instance. Access it:
+
+[source,bash]
+----
+# Get Grafana route
+oc get route grafana -n openshift-monitoring
+
+# Open in browser (URL from command above)
+----
+
+Login with your OpenShift credentials.
+
+=== Import vLLM dashboard
+
+Import the vLLM monitoring dashboard:
+
+1. Navigate to **Dashboards → Import**
+2. Upload the provided `vllm-dashboard.json` or paste the JSON content
+3. Select your Prometheus data source
+4. Click **Import**
+
+Key panels to monitor:
+* **Requests per second**: Current throughput
+* **Active requests**: Concurrent requests being processed
+* **GPU cache usage**: Memory utilization
+* **Generation throughput**: Tokens generated per second
+* **Request latency**: P50, P95, P99 latencies
+
+NOTE: Dashboard files should be provided in workshop materials. If not available, create custom panels for the metrics listed above.
+
+== Exercise 3: Run GuideLLM benchmarks with Jupyter Notebook
+
+Now establish your performance baseline by running comprehensive benchmarks with GuideLLM using a pre-configured Jupyter notebook.
+
+=== Access the benchmark notebook
+
+The workshop provides a Jupyter notebook that automates the benchmarking process:
+
+**Notebook location**: `notebooks/module-02-vllm-baseline-benchmark.ipynb`
+
+This notebook will:
+* Install and configure GuideLLM
+* Create ParasolCloud's customer service dataset (with shared system prompts)
+* Run three benchmark scenarios: low, medium, and high load
+* Analyze results and generate visualizations
+* Document baseline performance metrics
+
+=== Launch JupyterLab
+
+If you're using OpenShift AI workbench:
+
+[source,bash]
+----
+# Access your workbench JupyterLab instance
+# Navigate to: OpenShift AI > Data Science Projects > Your Project > Workbenches
+----
+
+If you're running locally:
+
+[source,bash]
+----
+# Navigate to the workshop directory
+cd /path/to/llm-d-showroom
+
+# Launch JupyterLab
+jupyter lab
+----
+
+=== Run the benchmark notebook
+
+1. Open `notebooks/module-02-vllm-baseline-benchmark.ipynb`
+2. Review the notebook introduction and objectives
+3. Execute cells sequentially (Shift+Enter) or use "Run All Cells"
+
+The notebook performs these steps:
+
+**Setup (Cells 1-3)**:
+* Installs GuideLLM
+* Configures output directories
+* Retrieves your InferenceService URL
+
+**Dataset Creation (Cell 4)**:
+* Generates 16 customer service prompts with shared prefix
+* Saves to `benchmark-results/module-02/customer-service-prompts.txt`
+
+**Benchmarks (Cells 5-7)**:
+* Low load: 1 concurrent request, 50 total requests
+* Medium load: 5 concurrent requests, 100 total requests
+* High load: 20 concurrent requests, 200 total requests
+
+**Analysis (Cells 8-10)**:
+* Loads benchmark results
+* Creates performance summary table
+* Generates throughput and latency visualizations
+
+**Observations (Cell 11)**:
+* Documents key findings
+* Calculates ParasolCloud's GPU requirements
+* Identifies optimization opportunities
+
+=== Monitor in Grafana
+
+While the benchmarks run (especially the high-load benchmark in Cell 7):
+
+1. Open your vLLM Grafana dashboard
+2. Watch metrics in real-time:
+   * Requests per second climbing to saturation (~50 req/s)
+   * GPU cache usage increasing
+   * Active requests matching concurrency settings
+3. Take screenshots of peak performance
+
+💡 **TIP**: The high-load benchmark takes 5-7 minutes - perfect time to explore Grafana!
+
+=== Review your results
+
+After the notebook completes, you'll have:
+
+**Benchmark data**:
+* `benchmark-results/module-02/baseline-single-low.json`
+* `benchmark-results/module-02/baseline-single-medium.json`
+* `benchmark-results/module-02/baseline-single-high.json`
+
+**Analysis outputs**:
+* `benchmark-results/module-02/baseline-summary.csv` - Performance metrics table
+* `benchmark-results/module-02/baseline-performance.png` - Throughput and latency charts
+* `benchmark-results/module-02/baseline-observations.txt` - Key findings
+
+**Expected baseline metrics** (approximate):
+* Maximum throughput: ~50 req/s (single GPU saturated)
+* TTFT P95: ~900ms under high load
+* P95 Latency: ~1000ms under high load
+* Scaling requirement: ~10 GPUs needed for ParasolCloud's 500 req/s target
+
+=== Troubleshooting
+
+**Issue**: Notebook can't find InferenceService URL
+
+**Solution**:
+[source,bash]
+----
+# Manually check InferenceService status
+oc get inferenceservice llama-vllm-single
+
+# If not Ready, wait or check logs
+oc logs -l serving.kserve.io/inferenceservice=llama-vllm-single
+----
+
+**Issue**: GuideLLM benchmarks fail with connection errors
+
+**Solution**: Verify the vLLM endpoint is accessible:
+[source,bash]
+----
+# Test the endpoint
+INFERENCE_URL=$(oc get inferenceservice llama-vllm-single -o jsonpath='{.status.url}')
+curl -k ${INFERENCE_URL}/v1/models
+----
+
+**Issue**: Benchmarks are very slow
+
+**Solution**: This is expected for high-load scenarios. The high-load benchmark (200 requests at 20 concurrent) takes 5-7 minutes.
+
+== Module 2 summary
+
+**What you accomplished:**
+* Deployed Llama 3.1 8B Instruct using KServe and vLLM on single GPU
+* Configured Grafana monitoring for vLLM metrics
+* Ran comprehensive GuideLLM benchmarks at low, medium, and high load using Jupyter notebook
+* Generated performance visualizations and analysis reports
+* Established baseline: ~50 req/s throughput, ~900ms P95 TTFT
+
+**Key takeaways:**
+* Single GPU provides ~50 req/s maximum throughput for 8B model
+* Latency degrades significantly when approaching saturation (400ms → 900ms TTFT P95)
+* vLLM metrics in Grafana provide real-time performance visibility
+* Jupyter notebooks streamline benchmarking workflows with automated analysis
+
+**ParasolCloud's baseline:**
+* Current capacity: ~50 req/s per GPU
+* Target capacity: 500+ req/s (10x current capacity)
+* Naive calculation: Need ~10 GPUs for linear 10x scaling
+* Key question: Can intelligent orchestration improve this ratio?
+
+**Artifacts generated:**
+* Benchmark results (JSON) for all three load levels
+* Performance summary table (CSV)
+* Throughput and latency visualizations (PNG)
+* Baseline observations document
+
+**Next steps:**
+Module 3 will scale your vLLM deployment to 4 GPUs using naive horizontal scaling and measure the actual throughput improvement. You'll discover why simple scaling doesn't deliver linear gains - and why KV cache sharing matters.

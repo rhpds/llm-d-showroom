@@ -1,0 +1,216 @@
+= Introducing llm-d: Your Production-Ready Path to Scalable LLM Inference
+:source-highlighter: rouge
+:toc: macro
+:toclevels: 2
+
+toc::[]
+
+Welcome to the llm-d workshop! In the next 2 hours, you'll gain hands-on experience with production-ready distributed LLM inference that delivers measurable performance improvements and cost savings.
+
+== What you'll learn
+
+This workshop teaches you how to scale LLM inference efficiently using llm-d—an intelligent orchestration layer that sits above vLLM and routes requests based on KV cache awareness.
+
+You'll work through a realistic business scenario as a Platform Engineer at ParasolCloud, tasked with scaling an AI-powered customer service platform to support a major client expansion within a tight deadline.
+
+**Your goal**: Evaluate whether llm-d can deliver better performance and cost efficiency than naive horizontal scaling.
+
+=== Hands-on skills you'll gain
+
+By the end of this workshop, you'll be able to:
+
+* **Deploy and benchmark LLM inference** using vLLM, KServe, and OpenShift AI
+* **Measure performance scientifically** with GuideLLM benchmarks (TTFT, ITL, throughput)
+* **Compare scaling strategies** - naive horizontal scaling vs. intelligent orchestration
+* **Deploy llm-d** with Precise Prefix Cache Aware Routing
+* **Quantify business value** - connect technical metrics to cost savings and customer experience
+* **Articulate ROI** to technical and business stakeholders
+
+=== What makes this workshop different
+
+This is NOT a lecture-heavy introduction to distributed systems. You'll spend:
+
+* **20 minutes** on concepts (Module 1)
+* **100 minutes** deploying, benchmarking, and analyzing real systems (Modules 2-5)
+
+You'll generate real performance data, make architectural decisions based on benchmarks, and build a business case with quantified ROI.
+
+== Workshop modules
+
+=== Module 1: Introduction & Core Concepts (20 minutes)
+
+Understand the fundamentals that make distributed inference efficient:
+
+* LLM inference phases: prefill vs. decode
+* KV cache and why sharing it matters
+* Performance metrics: TTFT, ITL, throughput, cache hit rate
+* llm-d capabilities: intelligent scheduling, prefill/decode disaggregation, wide expert parallelism
+
+**Outcome**: Conceptual foundation for understanding why naive scaling leaves performance on the table.
+
+=== Module 2: Deploy Model with vLLM & Benchmark (25 minutes)
+
+Establish your performance baseline:
+
+* Deploy Llama 3.1 8B Instruct on a single GPU using KServe and vLLM
+* Configure Grafana dashboard for real-time metrics
+* Run GuideLLM benchmarks at low, medium, and high load
+* Document baseline performance metrics
+
+**Outcome**: Quantified single-GPU performance baseline for comparison.
+
+=== Module 3: Scale vLLM & Compare Performance (25 minutes)
+
+Discover the limitations of naive horizontal scaling:
+
+* Deploy 4 independent vLLM instances (1 per GPU)
+* Configure round-robin load balancing
+* Run the same benchmarks across scaled infrastructure
+* Analyze scaling efficiency
+
+**Outcome**: Understanding why simple scaling doesn't deliver linear performance gains.
+
+=== Module 4: Deploy llm-d & Benchmark (35 minutes)
+
+Unlock super-linear scaling with intelligent orchestration:
+
+* Deploy llm-d with Precise Prefix Cache Aware Routing
+* Configure llm-d to manage your 4 vLLM backend instances
+* Run comprehensive benchmarks
+* Measure performance improvements from intelligent scheduling
+* Quantify business impact in terms of GPU cost savings
+
+**Outcome**: Demonstrable proof that intelligent scheduling delivers measurably better throughput on the same hardware.
+
+=== Module 5: Recap & Customer Value (15 minutes)
+
+Connect technical results to business outcomes:
+
+* Synthesize your findings into a recommendation
+* Practice messaging for different audiences (technical, business, operations)
+* Understand deployment patterns and production considerations
+* Identify next steps for llm-d adoption
+
+**Outcome**: Ability to advocate for llm-d with data-driven business cases and clear ROI.
+
+== What you'll demonstrate
+
+By the end of this workshop, you'll have:
+
+* **Deployed three configurations** and collected real benchmark data
+* **Compared performance** across single GPU, naive multi-GPU scaling, and llm-d orchestration
+* **Measured key metrics** including throughput, latency, and cache efficiency
+* **Quantified business impact** in terms of GPU cost savings and customer experience improvements
+* **Built a recommendation** with data-driven ROI analysis for ParasolCloud
+
+== Prerequisites
+
+This workshop assumes you already have:
+
+* **Experience with vLLM** - You understand how to deploy models and basic inference concepts
+* **LLM inference knowledge** - Familiar with metrics like TTFT, ITL, throughput, and KV cache
+* **Kubernetes/OpenShift skills** - Can work with kubectl/oc CLI, understand pods and services
+* **KServe familiarity** - Know what InferenceServices and ServingRuntimes are
+* **Grafana basics** - Can read dashboards and understand time-series metrics
+
+**What we WON'T cover**:
+
+* Transformer architecture fundamentals
+* How vLLM works internally
+* Kubernetes basics
+* Introduction to LLM serving
+
+This workshop focuses on **distributed inference optimization**, not foundational concepts.
+
+== Your ParasolCloud scenario
+
+Throughout the workshop, you'll work on a realistic business problem:
+
+**The Challenge**: ParasolCloud's AI-powered customer service platform needs to scale significantly for a major client expansion launching in 90 days.
+
+**Current State**:
+* Single GPU vLLM deployment
+* Limited request capacity
+* Customer service chatbot with system prompt shared across queries
+
+**Your Task**:
+* Evaluate scaling options
+* Benchmark naive scaling (more GPUs with round-robin load balancing)
+* Test llm-d with intelligent cache-aware routing
+* Provide recommendation with quantified ROI
+
+**Success Criteria**:
+* Achieve required throughput for client expansion
+* Minimize GPU investment
+* Improve latency for better customer experience
+* Deploy within 90-day timeline
+
+== Common questions before you start
+
+**"I've never used llm-d before. Will I be able to follow along?"**
+
+Yes! The workshop is designed for vLLM users who want to learn distributed inference. llm-d configuration is straightforward—you'll see it deploys in minutes.
+
+**"What if I get stuck during exercises?"**
+
+Ask for help! The instructor and other participants are resources. Each module also includes troubleshooting sections for common issues.
+
+**"Can I use what I learn here in production?"**
+
+Absolutely. llm-d is production-ready, and you'll leave with:
+* Deployment patterns and configurations
+* Benchmark methodologies
+* Monitoring and observability setup
+* Business case templates
+
+**"What if my workload is different from the customer service example?"**
+
+The principles apply broadly. Module 4 includes exercises testing different workload patterns (high prefix similarity, low similarity, mixed). You'll understand when llm-d provides high value vs. moderate value.
+
+**"How technical is the ROI analysis?"**
+
+We balance technical depth with business clarity. You'll calculate GPU cost savings, latency improvements, and efficiency gains—then practice translating these into messaging for executives, engineers, and operations teams.
+
+**"What happens after the workshop?"**
+
+Module 5 provides:
+* Links to llm-d documentation and community resources
+* Next steps for production adoption (staging deployment, gradual rollout)
+* Advanced topics (prefill/decode disaggregation, MoE models)
+* Contact information for ongoing support
+
+== Workshop structure and timing
+
+**Total duration**: 120 minutes (2 hours)
+
+* Module 1: Introduction & Core Concepts - 20 minutes
+* Module 2: Deploy Model with vLLM & Benchmark - 25 minutes
+* Module 3: Scale vLLM & Compare Performance - 25 minutes
+* Module 4: Deploy llm-d & Benchmark - 35 minutes
+* Module 5: Recap & Customer Value - 15 minutes
+
+**Pacing tips**:
+* Modules 2-4 are hands-on. If you finish exercises early, help others or experiment with configurations.
+* If you fall behind, the instructor will ensure key concepts are covered. You can complete exercises later.
+* Screenshots and command outputs are provided for reference if time runs short.
+
+== What success looks like
+
+By the end of the workshop, you'll have:
+
+✓ **Deployed three configurations** - single GPU, 4 GPU naive scaling, 4 GPU with llm-d
+✓ **Generated real benchmark data** - TTFT, ITL, throughput, cache hit rates
+✓ **Created performance comparisons** - charts and tables showing improvements
+✓ **Calculated ROI** - GPU cost savings, latency improvements, efficiency gains
+✓ **Built a recommendation** - data-driven proposal for ParasolCloud leadership
+✓ **Practiced messaging** - different value propositions for different audiences
+
+**Most importantly**: You'll understand not just *how* to deploy llm-d, but *when* it provides value and *why* it works.
+
+== Ready to begin?
+
+Let's start by understanding your role and task. Navigate to the **Overview** section to learn about ParasolCloud's scaling challenge.
+
+Then dive into **Module 1** to build the conceptual foundation for distributed inference optimization.
+
+Welcome aboard, and let's unlock super-linear scaling together!

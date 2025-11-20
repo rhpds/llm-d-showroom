@@ -1,0 +1,503 @@
+= Module 3: Scale vLLM & Compare Performance
+:source-highlighter: rouge
+:toc: macro
+:toclevels: 2
+
+You've established that a single GPU delivers ~50 req/s. ParasolCloud needs 500+ req/s. The obvious solution: add more GPUs.
+
+In this module, you'll scale to 4 GPUs using naive horizontal scaling, run the same benchmarks, and discover why simple scaling doesn't deliver the expected 4x improvement.
+
+== Learning objectives
+By the end of this module, you'll be able to:
+
+* Scale vLLM deployment to multiple GPUs
+* Configure load balancing across vLLM instances
+* Execute comparative benchmarks to measure scaling efficiency
+* Understand limitations of naive horizontal scaling and cache inefficiency
+
+== Understanding naive scaling
+
+Before deploying, understand what "naive scaling" means:
+
+**Naive horizontal scaling**:
+* Deploy multiple independent vLLM instances (1 per GPU)
+* Use round-robin or random load balancing
+* Each instance maintains its own KV cache
+* No coordination between instances
+
+**Expected behavior**:
+* 4 GPUs should theoretically deliver 4x throughput (200 req/s)
+* In practice: 3-3.5x throughput due to inefficiencies
+
+**Why not 4x?**
+* Load balancer overhead
+* Uneven load distribution
+* Most importantly: **No KV cache sharing**
+
+Every vLLM instance recomputes the full prompt for every request, even if another instance recently processed an identical prefix.
+
+== Exercise 1: Deploy 4 vLLM instances
+
+You'll create 4 separate InferenceServices, each using 1 GPU.
+
+=== Clean up single-GPU deployment
+
+First, remove your single-GPU deployment:
+
+[source,bash]
+----
+# Delete previous InferenceService
+oc delete inferenceservice llama-vllm-single
+
+# Verify deletion
+oc get inferenceservice
+----
+
+=== Deploy 4 vLLM instances
+
+Create 4 InferenceService configurations. For efficiency, use a loop:
+
+[source,bash]
+----
+# Create 4 InferenceService manifests
+for i in {1..4}; do
+cat > llama-vllm-instance-${i}.yaml << EOF
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: llama-vllm-instance-${i}
+  annotations:
+    serving.kserve.io/deploymentMode: RawDeployment
+spec:
+  predictor:
+    model:
+      modelFormat:
+        name: pytorch
+      runtime: vllm-runtime
+      storageUri: hf://meta-llama/Meta-Llama-3.1-8B-Instruct
+      # Add HF_TOKEN env if needed (see Module 2)
+EOF
+done
+----
+
+Apply all instances:
+
+[source,bash]
+----
+# Deploy all instances
+for i in {1..4}; do
+  oc apply -f llama-vllm-instance-${i}.yaml
+done
+
+# Watch deployment progress
+watch oc get inferenceservice
+----
+
+Wait for all 4 instances to reach `Ready` state. This may take 10-15 minutes as each downloads the model.
+
+Monitor progress:
+
+[source,bash]
+----
+# Check all pods
+oc get pods -l serving.kserve.io/inferenceservice -w
+
+# Check specific instance
+oc logs -l serving.kserve.io/inferenceservice=llama-vllm-instance-1 -f
+----
+
+=== Verify all instances are serving
+
+Test each instance individually:
+
+[source,bash]
+----
+# Test each instance
+for i in {1..4}; do
+  echo "Testing instance $i..."
+  INFERENCE_URL=$(oc get inferenceservice llama-vllm-instance-${i} -o jsonpath='{.status.url}')
+  curl -k ${INFERENCE_URL}/v1/models
+  echo ""
+done
+----
+
+All instances should respond with model information.
+
+== Exercise 2: Configure load balancing
+
+Now create a load balancer to distribute requests across the 4 vLLM instances.
+
+=== Option A: Use OpenShift Service (simple)
+
+Create a Service that load balances across all vLLM instances:
+
+[source,bash]
+----
+cat > vllm-loadbalancer-service.yaml << 'EOF'
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-loadbalancer
+spec:
+  selector:
+    serving.kserve.io/inferenceservice: llama-vllm-instance
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+  type: ClusterIP
+  sessionAffinity: None  # Round-robin, no session stickiness
+EOF
+----
+
+NOTE: This selector won't match all instances because each has a unique name. For proper load balancing, use a shared label.
+
+Let's add a common label to all instances:
+
+[source,bash]
+----
+# Label all vLLM instances
+for i in {1..4}; do
+  oc patch inferenceservice llama-vllm-instance-${i} \
+    --type merge \
+    -p '{"metadata":{"labels":{"app":"vllm-scaled"}}}'
+done
+----
+
+Update the service selector:
+
+[source,bash]
+----
+cat > vllm-loadbalancer-service.yaml << 'EOF'
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-loadbalancer
+spec:
+  selector:
+    app: vllm-scaled
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+  type: ClusterIP
+  sessionAffinity: None
+EOF
+----
+
+Apply the service:
+
+[source,bash]
+----
+oc apply -f vllm-loadbalancer-service.yaml
+
+# Verify service endpoints (should show 4)
+oc get endpoints vllm-loadbalancer
+----
+
+=== Create Route for external access
+
+Expose the load balancer service:
+
+[source,bash]
+----
+# Create route
+oc create route edge vllm-scaled \
+  --service=vllm-loadbalancer \
+  --port=8080 \
+  --insecure-policy=Redirect
+
+# Get the external URL
+LB_URL=$(oc get route vllm-scaled -o jsonpath='{.spec.host}')
+echo "Load balancer URL: https://${LB_URL}"
+----
+
+=== Test load balancing
+
+Verify requests are distributed across instances:
+
+[source,bash]
+----
+# Send multiple requests and observe which instances handle them
+for i in {1..10}; do
+  echo "Request $i:"
+  curl -k https://${LB_URL}/v1/completions \
+    -H "Content-Type: application/json" \
+    -d '{
+      "model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+      "prompt": "The capital of France is",
+      "max_tokens": 10
+    }' 2>/dev/null | jq -r '.choices[0].text'
+  sleep 1
+done
+----
+
+All requests should succeed, distributed across your 4 instances.
+
+== Exercise 3: Run scaled benchmarks
+
+Now run the same benchmarks you performed in Module 2, but against the scaled deployment.
+
+=== Update Grafana to monitor all instances
+
+Before benchmarking, update your ServiceMonitor to capture metrics from all instances:
+
+[source,bash]
+----
+cat > vllm-scaled-servicemonitor.yaml << 'EOF'
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: vllm-scaled-metrics
+spec:
+  selector:
+    matchLabels:
+      app: vllm-scaled
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+EOF
+----
+
+[source,bash]
+----
+oc apply -f vllm-scaled-servicemonitor.yaml
+----
+
+Create or update your Grafana dashboard to show aggregate metrics across all instances.
+
+=== Run benchmark - Medium load
+
+Start with medium load (5 concurrent) to see initial scaling benefits:
+
+[source,bash]
+----
+# Get load balancer URL
+LB_URL=$(oc get route vllm-scaled -o jsonpath='{.spec.host}')
+
+# Run benchmark
+guidellm \
+  --target https://${LB_URL}/v1/completions \
+  --model meta-llama/Meta-Llama-3.1-8B-Instruct \
+  --data customer-service-prompts.txt \
+  --rate 10 \
+  --max-requests 200 \
+  --output-format json \
+  --output-file scaled-4gpu-medium.json
+----
+
+Expected results:
+* **Throughput**: 60-90 req/s (vs. 8-15 req/s single GPU)
+* **TTFT (P50)**: 300-500ms
+* **ITL**: 20-30ms
+
+=== Run benchmark - High load
+
+Push to find the new saturation point:
+
+[source,bash]
+----
+# Run high-load benchmark
+guidellm \
+  --target https://${LB_URL}/v1/completions \
+  --model meta-llama/Meta-Llama-3.1-8B-Instruct \
+  --data customer-service-prompts.txt \
+  --rate 50 \
+  --max-requests 400 \
+  --output-format json \
+  --output-file scaled-4gpu-high.json
+----
+
+Expected results:
+* **Throughput**: 150-180 req/s (3-3.5x improvement vs. single GPU)
+* **TTFT (P50)**: 400-600ms
+* **TTFT (P95)**: 800-1100ms
+* **ITL**: 25-35ms
+* **P95 Latency**: 900-1300ms
+
+=== Run benchmark - Very high load
+
+Test beyond saturation:
+
+[source,bash]
+----
+# Run very-high-load benchmark
+guidellm \
+  --target https://${LB_URL}/v1/completions \
+  --model meta-llama/Meta-Llama-3.1-8B-Instruct \
+  --data customer-service-prompts.txt \
+  --rate 100 \
+  --max-requests 500 \
+  --output-format json \
+  --output-file scaled-4gpu-very-high.json
+----
+
+At this point, you should see:
+* Throughput plateaus at ~180 req/s (not increasing)
+* Latency continues increasing
+* System is saturated
+
+== Exercise 4: Analyze scaling efficiency
+
+Compare your single-GPU and 4-GPU results.
+
+=== Create comparison summary
+
+[source,bash]
+----
+cat > scaling-comparison.txt << 'EOF'
+=== Scaling Comparison: 1 GPU vs. 4 GPUs ===
+
+Single GPU Baseline:
+- Throughput: ~50 req/s
+- TTFT (P95): ~900ms
+- GPU count: 1
+
+4 GPUs (Naive Scaling):
+- Throughput: ~170 req/s
+- TTFT (P95): ~1000ms
+- GPU count: 4
+
+Scaling Efficiency:
+- Expected (linear): 4x = 200 req/s
+- Actual: 3.4x = 170 req/s
+- Efficiency: 85%
+
+Cost Analysis:
+- Single GPU: 50 req/s, cost = $X
+- 4 GPUs: 170 req/s, cost = $4X
+- Cost per req/s (4 GPU): ~$0.024X (vs. $0.020X for single GPU)
+
+ParasolCloud Target:
+- Required: 500 req/s
+- 4 GPUs provide: 170 req/s
+- Additional GPUs needed: ~12 total GPUs (at 85% efficiency)
+
+Why not 4x improvement?
+- Load balancer overhead: ~5%
+- Uneven distribution: ~5%
+- NO KV CACHE SHARING: ~10-15% efficiency loss
+
+Key observation: Each instance recomputes identical system prompts.
+With shared system prompt of 300 tokens:
+- 300 tokens wasted per request
+- 4 instances = 4 separate caches
+- No cross-instance cache benefit
+EOF
+----
+
+=== Visualize the problem
+
+The key inefficiency is cache isolation. Visualize it:
+
+[source,text]
+----
+Request flow with naive scaling:
+
+Request 1: "You are a helpful agent. User asks: reset password?"
+  → Routes to Instance 1
+  → Instance 1 computes full prompt (300 + 50 = 350 tokens)
+  → Caches in Instance 1
+
+Request 2: "You are a helpful agent. User asks: business hours?"
+  → Routes to Instance 2 (round-robin)
+  → Instance 2 computes full prompt (300 + 50 = 350 tokens)
+  → No cache benefit, recomputes shared prefix
+  → Caches in Instance 2
+
+Request 3: "You are a helpful agent. User asks: track order?"
+  → Routes to Instance 3
+  → Instance 3 computes full prompt (300 + 50 = 350 tokens)
+  → No cache benefit
+  → Caches in Instance 3
+
+Result: System prompt recomputed 3 times across 3 instances
+Waste: 600 tokens of redundant computation
+----
+
+=== Calculate cache inefficiency
+
+Estimate the performance left on the table:
+
+[source,bash]
+----
+cat > cache-analysis.txt << 'EOF'
+=== Cache Efficiency Analysis ===
+
+Workload characteristics:
+- System prompt: 300 tokens (shared)
+- User query: 50-100 tokens (unique)
+- Total prompt: 350-400 tokens
+
+Single instance (baseline):
+- Cache hit rate: ~0% (no request reuse in benchmark)
+- All requests compute full prompt
+
+4 instances (naive scaling):
+- Cache hit rate: ~0% (requests distributed randomly)
+- Every request computes full 300-token system prompt
+- 4 separate caches with no sharing
+
+Theoretical with perfect cache sharing:
+- If all requests to same instance: 60-80% cache hit rate on system prompt
+- Effective computation: 100 tokens avg (vs. 375 tokens)
+- Potential speedup: 3.75x on prefill phase
+
+ParasolCloud opportunity:
+- 4 GPUs naive: 170 req/s
+- 4 GPUs with 70% cache hit rate: ~250-300 req/s (estimated)
+- Potential improvement: 45-75% throughput increase
+EOF
+----
+
+== Exercise 5: Observe cache behavior in Grafana
+
+While benchmarks run, monitor vLLM metrics:
+
+1. Open Grafana dashboard
+2. Run a high-load benchmark
+3. Observe:
+   * **GPU cache usage per instance**: Each maintains its own cache
+   * **Cache hit rate**: Very low (~5-10% at best)
+   * **Compute utilization**: High prefill compute on all instances
+   * **Uneven load**: Some instances busier than others
+
+Take screenshots showing:
+* Cache hit rates across 4 instances
+* GPU utilization per instance
+* Request distribution
+
+These visualizations demonstrate the problem llm-d solves.
+
+== Module 3 summary
+
+**What you accomplished:**
+* Scaled vLLM deployment from 1 to 4 GPUs
+* Configured load balancing with OpenShift Service and Route
+* Ran comprehensive benchmarks at multiple load levels
+* Measured scaling efficiency: 3.4x throughput improvement (vs. theoretical 4x)
+
+**Key takeaways:**
+* Naive horizontal scaling provides ~85% efficiency (not 100%)
+* 4 GPUs deliver 170 req/s (vs. 50 req/s single GPU)
+* Latency improvements are minimal (P95 still ~1000ms)
+* **Critical insight**: No KV cache sharing across instances = wasted computation
+
+**The problem visualized:**
+* 4 separate vLLM instances = 4 isolated KV caches
+* System prompt (300 tokens) recomputed on every request
+* No coordination between instances
+* 10-15% efficiency loss due to redundant computation
+
+**ParasolCloud's challenge:**
+* Current capacity: 170 req/s (4 GPUs)
+* Target capacity: 500 req/s
+* Naive scaling: Requires ~12 GPUs total
+* Cost: 3x more GPUs than theoretical minimum (4x50=200, need 500, minimum 10 GPUs)
+
+**The question:**
+Can intelligent scheduling and cache-aware routing recover the lost efficiency?
+
+**Next steps:**
+Module 4 will deploy llm-d with Precise Prefix Cache Aware Routing. You'll configure llm-d to orchestrate your 4 vLLM instances intelligently, maximizing cache hit rates, and measure the performance improvement.

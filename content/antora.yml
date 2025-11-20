@@ -1,6 +1,7 @@
 name: modules
-title: Default Title
+title: Introducing llm-d
 version: master
+start_page: workshop/llm-d/00-index.adoc
 nav:
   - modules/ROOT/nav.adoc
 

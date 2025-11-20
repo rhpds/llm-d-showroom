@@ -1,0 +1,302 @@
+= Module 1: Introduction & Core Concepts
+:source-highlighter: rouge
+:toc: macro
+:toclevels: 2
+
+ParasolCloud needs to scale its LLM inference platform to handle 10x traffic growth. Before diving into hands-on deployment, you need to understand the core concepts that make distributed inference effective.
+
+In this module, you'll learn the fundamental concepts behind LLM inference optimization and discover how llm-d addresses the scaling challenges ParasolCloud faces.
+
+== Learning objectives
+By the end of this module, you'll be able to:
+
+* Explain key LLM inference concepts: KV cache, prefill vs decode, attention mechanisms
+* Describe important performance metrics: TTFT, ITL, throughput, and their business impact
+* Articulate llm-d's three core capabilities and when each provides value
+* Identify use cases where llm-d delivers measurable performance improvements
+
+== Understanding LLM inference fundamentals
+
+=== The inference process: Prefill and Decode
+
+When a user submits a prompt to a language model, inference happens in two distinct phases:
+
+**Prefill Phase** (Processing the prompt):
+* Model processes the entire input prompt at once
+* Computes attention across all input tokens simultaneously
+* Generates the KV (Key-Value) cache for the prompt
+* High parallelism - uses GPU efficiently
+* Happens once per request
+
+**Decode Phase** (Generating the response):
+* Model generates output tokens one at a time
+* Each new token requires attending to all previous tokens
+* Lower parallelism - less GPU efficient
+* Happens repeatedly until response completes
+
+**Why this matters**: These phases have different computational characteristics. Prefill is parallel and compute-intensive. Decode is sequential and memory-bandwidth intensive. Mixing them on the same GPU can create inefficiencies.
+
+=== The KV cache: Memory for attention
+
+The KV (Key-Value) cache is a memory optimization that stores intermediate attention computations:
+
+**What it stores**:
+* Key and Value matrices from previous tokens
+* Allows new tokens to attend to history without recomputation
+
+**Memory characteristics**:
+* Grows linearly with sequence length
+* Can consume significant GPU memory (gigabytes for long contexts)
+* Limits how many concurrent requests a GPU can handle
+
+**Cache sharing opportunity**:
+* Multiple requests with similar prefixes (e.g., system prompts) can share KV cache entries
+* Reduces redundant computation
+* Improves throughput significantly for repetitive workloads
+
+**ParasolCloud's challenge**: Customer service queries often share common system prompts and context. Without intelligent cache management, each request recomputes the same prefixes, wasting GPU cycles.
+
+=== Key performance metrics
+
+Understanding these metrics is critical for evaluating inference performance:
+
+[cols="2,3,3", options="header"]
+|===
+|Metric |Definition |Business Impact
+
+|**TTFT** (Time to First Token)
+|Latency from request submission to first token generated
+|User-perceived responsiveness. High TTFT feels laggy in chat applications.
+
+|**ITL** (Inter-Token Latency)
+|Time between consecutive output tokens
+|Affects streaming experience. High ITL makes responses appear to "stutter".
+
+|**Throughput**
+|Requests processed per second
+|Cost efficiency. Higher throughput = more users per GPU = lower cost per query.
+
+|**P50/P95/P99 Latency**
+|Latency percentiles across requests
+|Tail latency impacts user experience. P95 of 2 seconds means 5% of users wait that long.
+
+|**GPU Utilization**
+|Percentage of GPU compute actively used
+|Cost efficiency. Low utilization = wasted hardware investment.
+
+|**Cache Hit Rate**
+|Percentage of KV cache reused vs. computed
+|Efficiency multiplier. 70% hit rate = 3x less redundant computation.
+|===
+
+**ParasolCloud's target metrics**:
+* TTFT < 300ms (P95)
+* ITL < 30ms (P50)
+* Throughput > 500 req/s
+* GPU utilization > 75%
+
+== Introducing llm-d: Distributed inference orchestration
+
+llm-d is a distributed inference orchestration layer that sits above multiple vLLM instances, providing intelligent request routing and resource management.
+
+=== Core capability 1: Intelligent inference scheduling
+
+**The problem**: Naive load balancing across vLLM instances treats all requests equally, ignoring KV cache state.
+
+**llm-d's solution - Precise Prefix Cache Aware Routing**:
+* Routes requests based on prompt prefix similarity
+* Directs similar queries to the same vLLM instance
+* Maximizes KV cache hit rates
+* Reduces redundant computation
+
+**Example**:
+* Request A: "You are a helpful customer service agent. User asks: How do I reset my password?"
+* Request B: "You are a helpful customer service agent. User asks: What are your business hours?"
+
+Traditional load balancing: Routes randomly, each instance computes the full prompt.
+
+llm-d: Routes both to same instance, reuses "You are a helpful customer service agent" KV cache, only computes unique user question.
+
+**Performance impact**: 3-5x throughput improvement for workloads with shared prefixes.
+
+=== Core capability 2: Prefill/Decode disaggregation
+
+**The problem**: Prefill (parallel) and decode (sequential) compete for GPU resources on same instance, reducing efficiency.
+
+**llm-d's solution**:
+* Separate vLLM instances specialized for prefill or decode
+* Prefill instances handle prompt processing (high compute)
+* Decode instances handle token generation (high memory bandwidth)
+* KV cache transferred between instances
+
+**Benefits**:
+* Prefill instances can use larger batch sizes
+* Decode instances optimize for low latency
+* Better GPU utilization per phase
+
+**When it helps**: Large batches, long contexts, latency-sensitive applications.
+
+**ParasolCloud's scenario**: Customer service queries have moderate prefixes (200-500 tokens) and short responses (50-200 tokens). Precise Prefix Cache Aware Routing provides more value than disaggregation for this workload. Disaggregation becomes critical for longer contexts (4K+ tokens).
+
+=== Core capability 3: Wide expert parallelism (for MoE models)
+
+**The problem**: Mixture of Experts (MoE) models like DeepSeek R1 have many expert networks. Standard tensor parallelism splits experts across devices, creating communication bottlenecks.
+
+**llm-d's solution - Expert Parallelism + Data Parallelism**:
+* Distribute complete experts across devices (EP)
+* Replicate token batches for data parallelism (DP)
+* Reduce inter-device communication
+* Scale efficiently to 100+ experts
+
+**When it helps**: MoE models with many experts (DeepSeek R1, Mixtral, Grok).
+
+**ParasolCloud's scenario**: Starting with dense models (Llama 3.1). Wide expert parallelism becomes relevant when evaluating MoE models for cost efficiency.
+
+== llm-d architecture overview
+
+[source,text]
+----
+┌─────────────────────────────────────────────────────────┐
+│                     Client Requests                     │
+└─────────────────────┬───────────────────────────────────┘
+                      │
+                      ▼
+┌─────────────────────────────────────────────────────────┐
+│                   llm-d Orchestrator                    │
+│  ┌─────────────────────────────────────────────────┐   │
+│  │  Intelligent Request Router                     │   │
+│  │  - Prefix similarity analysis                   │   │
+│  │  - Cache-aware placement                        │   │
+│  │  - Load balancing                               │   │
+│  └─────────────────────────────────────────────────┘   │
+└──────────┬──────────┬──────────┬──────────┬─────────────┘
+           │          │          │          │
+           ▼          ▼          ▼          ▼
+    ┌──────────┐┌──────────┐┌──────────┐┌──────────┐
+    │ vLLM     ││ vLLM     ││ vLLM     ││ vLLM     │
+    │ Instance ││ Instance ││ Instance ││ Instance │
+    │ (GPU 1)  ││ (GPU 2)  ││ (GPU 3)  ││ (GPU 4)  │
+    └──────────┘└──────────┘└──────────┘└──────────┘
+----
+
+**Request flow**:
+1. Client sends request to llm-d endpoint
+2. llm-d analyzes prompt prefix
+3. Routes to vLLM instance with highest cache similarity
+4. vLLM processes request (reusing cached KV if available)
+5. llm-d returns response to client
+
+**Key insight**: From the client perspective, llm-d looks like a single vLLM endpoint. Behind the scenes, it orchestrates multiple instances intelligently.
+
+== Use cases where llm-d delivers value
+
+=== High-traffic multi-tenant LLM service (MaaS)
+
+**Scenario**: Platform serving LLMs to many customers with diverse workloads.
+
+**Why llm-d helps**:
+* Different customers/tenants often use similar system prompts
+* Prefix-aware routing groups similar workloads on same instances
+* Maximizes cache hit rates across tenant boundaries
+
+**Example**: OpenAI-style API serving hundreds of customers with GPT-like models.
+
+=== Chat and agent platforms with system prompts
+
+**Scenario**: Conversational AI with consistent system prompts across user sessions.
+
+**Why llm-d helps**:
+* System prompt KV cache shared across all users
+* Only user-specific messages computed per request
+* 50-70% of prompt computation eliminated
+
+**ParasolCloud's use case**: Customer service chatbot with 300-token system prompt, 100-200 token user queries. Without llm-d, every request recomputes system prompt. With llm-d, 60-80% cache hit rate on system prompt.
+
+=== Large model / long context workloads
+
+**Scenario**: Applications requiring long context windows (16K+ tokens) or very large models.
+
+**Why llm-d helps**:
+* Prefill/decode disaggregation optimizes resource usage per phase
+* Expert parallelism for MoE models reduces communication overhead
+* Better GPU memory management for large KV caches
+
+**Example**: Document analysis, code generation with large codebases, legal document review.
+
+=== Latency-sensitive applications
+
+**Scenario**: Real-time applications where P95 latency matters.
+
+**Why llm-d helps**:
+* Cache-aware routing reduces compute per request
+* Lower P95 latency due to cache hits
+* More predictable performance
+
+**Example**: Live translation, real-time customer service, interactive tutoring.
+
+== When llm-d may NOT be necessary
+
+Be honest about where llm-d doesn't add significant value:
+
+* **Batch inference jobs**: Offline workloads with no latency requirements
+* **Completely unique prompts**: No shared prefixes to cache
+* **Single-GPU deployments**: Orchestration overhead not justified
+* **Very low traffic**: <10 req/s can be handled by single vLLM instance
+
+== Comparing naive scaling vs. llm-d
+
+[cols="3,4,4", options="header"]
+|===
+|Aspect |Naive vLLM Scaling |llm-d with Intelligent Routing
+
+|**Request routing**
+|Round-robin or random
+|Prefix-aware, cache-optimized
+
+|**Cache utilization**
+|20-30% hit rate
+|60-80% hit rate
+
+|**Throughput scaling**
+|Linear (4 GPUs = 4x throughput)
+|Super-linear (4 GPUs = 5-7x throughput)
+
+|**Latency (P95)**
+|Minimal improvement
+|40-60% reduction
+
+|**Setup complexity**
+|Deploy multiple vLLM + load balancer
+|Deploy llm-d + configure backends
+
+|**Operational overhead**
+|Manage many independent instances
+|Single control plane
+|===
+
+**Key insight**: Naive scaling provides linear throughput gains but doesn't optimize for cache efficiency. llm-d provides super-linear gains by making each GPU more efficient through intelligent routing.
+
+== Module 1 summary
+
+You've completed the conceptual foundation for distributed LLM inference.
+
+**What you learned:**
+* LLM inference happens in two phases: prefill (parallel) and decode (sequential)
+* KV cache stores attention computations and can be shared across similar requests
+* Key metrics: TTFT, ITL, throughput, cache hit rate
+* llm-d provides intelligent routing based on prefix similarity
+
+**Key takeaways:**
+* Naive horizontal scaling provides linear gains (4 GPUs = 4x throughput)
+* Intelligent scheduling provides super-linear gains (4 GPUs = 5-7x throughput)
+* Cache hit rate is the multiplier - 70% hit rate = 3x less redundant computation
+* llm-d is most valuable for workloads with shared prefixes (system prompts, common contexts)
+
+**ParasolCloud's opportunity:**
+* Customer service workload has 300-token system prompt shared across queries
+* Expected 60-80% cache hit rate on system prompt
+* Projected 4-6x throughput improvement with 4 GPUs vs. single GPU
+* Enables 10x traffic scale with 4-5x hardware investment instead of 10x
+
+**Next steps:**
+Module 2 will establish your performance baseline by deploying a single-GPU vLLM instance and running comprehensive benchmarks with GuideLLM.

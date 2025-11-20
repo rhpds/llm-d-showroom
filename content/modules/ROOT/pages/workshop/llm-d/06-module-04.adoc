@@ -1,0 +1,605 @@
+= Module 4: Deploy llm-d & Benchmark
+:source-highlighter: rouge
+:toc: macro
+:toclevels: 2
+
+You've proven that 4 GPUs with naive scaling deliver 170 req/s with minimal cache efficiency. Now it's time to deploy llm-d with Precise Prefix Cache Aware Routing to unlock the performance trapped in redundant computation.
+
+In this module, you'll deploy llm-d to orchestrate your 4 vLLM instances intelligently, configure monitoring, run benchmarks, and quantify the improvement.
+
+== Learning objectives
+By the end of this module, you'll be able to:
+
+* Deploy llm-d with Precise Prefix Cache Aware Routing configuration
+* Configure llm-d to orchestrate multiple vLLM backend instances
+* Set up llm-d Grafana dashboard for performance monitoring
+* Execute benchmarks and measure throughput, latency, and cache efficiency improvements
+* Quantify business value of intelligent scheduling with real performance data
+
+== Understanding llm-d deployment architecture
+
+Before deploying, understand how llm-d integrates with your existing vLLM instances:
+
+[source,text]
+----
+                    Client Requests
+                           |
+                           v
+                   ┌───────────────┐
+                   │  llm-d Pod    │
+                   │  (Orchestrator)│
+                   └───────┬───────┘
+                           |
+        ┌──────────────────┼──────────────────┐
+        |                  |                  |
+        v                  v                  v
+  ┌──────────┐       ┌──────────┐       ┌──────────┐
+  │ vLLM     │       │ vLLM     │       │ vLLM     │
+  │ Instance │       │ Instance │       │ Instance │
+  │ 1 (GPU1) │       │ 2 (GPU2) │  ...  │ 4 (GPU4) │
+  └──────────┘       └──────────┘       └──────────┘
+
+llm-d routing logic:
+1. Receives request from client
+2. Analyzes prompt prefix
+3. Computes similarity to cached prefixes per backend
+4. Routes to backend with highest cache hit probability
+5. Returns response to client
+----
+
+**Key insight**: Your 4 vLLM instances keep running. llm-d sits in front as an intelligent reverse proxy.
+
+== Exercise 1: Deploy llm-d orchestrator
+
+=== Create llm-d configuration
+
+llm-d needs to know about your vLLM backend instances. Create a ConfigMap with backend configuration:
+
+[source,bash]
+----
+cat > llm-d-config.yaml << 'EOF'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: llm-d-config
+data:
+  config.yaml: |
+    # llm-d configuration
+    backends:
+      - name: vllm-instance-1
+        url: http://llama-vllm-instance-1-predictor:8080
+        max_concurrent_requests: 50
+      - name: vllm-instance-2
+        url: http://llama-vllm-instance-2-predictor:8080
+        max_concurrent_requests: 50
+      - name: vllm-instance-3
+        url: http://llama-vllm-instance-3-predictor:8080
+        max_concurrent_requests: 50
+      - name: vllm-instance-4
+        url: http://llama-vllm-instance-4-predictor:8080
+        max_concurrent_requests: 50
+
+    routing:
+      strategy: prefix-cache-aware
+      prefix_cache:
+        enabled: true
+        similarity_threshold: 0.7
+        max_prefix_length: 512
+
+    metrics:
+      enabled: true
+      port: 9090
+EOF
+----
+
+Apply the ConfigMap:
+
+[source,bash]
+----
+oc apply -f llm-d-config.yaml
+----
+
+=== Deploy llm-d orchestrator pod
+
+Create the llm-d Deployment:
+
+[source,bash]
+----
+cat > llm-d-deployment.yaml << 'EOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llm-d
+  labels:
+    app: llm-d
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: llm-d
+  template:
+    metadata:
+      labels:
+        app: llm-d
+    spec:
+      containers:
+      - name: llm-d
+        image: quay.io/rh-aiservices-bu/llm-d:v0.3.0
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        - containerPort: 9090
+          name: metrics
+          protocol: TCP
+        volumeMounts:
+        - name: config
+          mountPath: /config
+        env:
+        - name: LLM_D_CONFIG
+          value: /config/config.yaml
+        - name: LOG_LEVEL
+          value: "info"
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1"
+          limits:
+            memory: "4Gi"
+            cpu: "2"
+      volumes:
+      - name: config
+        configMap:
+          name: llm-d-config
+EOF
+----
+
+Apply the Deployment:
+
+[source,bash]
+----
+oc apply -f llm-d-deployment.yaml
+
+# Watch pod creation
+oc get pods -l app=llm-d -w
+----
+
+=== Create llm-d Service
+
+Expose llm-d with a Service:
+
+[source,bash]
+----
+cat > llm-d-service.yaml << 'EOF'
+apiVersion: v1
+kind: Service
+metadata:
+  name: llm-d
+  labels:
+    app: llm-d
+spec:
+  selector:
+    app: llm-d
+  ports:
+    - name: http
+      protocol: TCP
+      port: 8080
+      targetPort: 8080
+    - name: metrics
+      protocol: TCP
+      port: 9090
+      targetPort: 9090
+  type: ClusterIP
+EOF
+----
+
+Apply the Service:
+
+[source,bash]
+----
+oc apply -f llm-d-service.yaml
+
+# Verify service
+oc get svc llm-d
+----
+
+=== Create Route for external access
+
+Expose llm-d externally:
+
+[source,bash]
+----
+# Create route
+oc create route edge llm-d \
+  --service=llm-d \
+  --port=8080 \
+  --insecure-policy=Redirect
+
+# Get the llm-d URL
+LLMD_URL=$(oc get route llm-d -o jsonpath='{.spec.host}')
+echo "llm-d URL: https://${LLMD_URL}"
+----
+
+=== Verify llm-d is running
+
+Test llm-d connectivity:
+
+[source,bash]
+----
+# Check llm-d health
+curl -k https://${LLMD_URL}/health
+
+# List available models (should show backends)
+curl -k https://${LLMD_URL}/v1/models
+
+# Test a simple request
+curl -k https://${LLMD_URL}/v1/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+    "prompt": "San Francisco is a",
+    "max_tokens": 20
+  }'
+----
+
+Expected output: llm-d routes the request to one of your vLLM instances and returns a completion.
+
+=== Verify llm-d is routing to backends
+
+Check llm-d logs to see routing decisions:
+
+[source,bash]
+----
+# View llm-d logs
+oc logs -l app=llm-d --tail=50
+
+# You should see log lines indicating:
+# - Backend health checks
+# - Routing decisions
+# - Cache hit analysis
+----
+
+=== Troubleshooting
+
+**Issue**: llm-d pod not starting
+**Solution**:
+[source,bash]
+----
+# Check pod status
+oc get pods -l app=llm-d
+
+# Check events
+oc describe pod -l app=llm-d
+
+# Common issues:
+# - ConfigMap not found: Verify `oc get configmap llm-d-config`
+# - Image pull: Check image name and registry access
+# - Resource limits: Verify namespace has CPU/memory quota
+----
+
+**Issue**: llm-d cannot reach vLLM backends
+**Solution**:
+[source,bash]
+----
+# Verify backend service URLs are correct
+oc get svc | grep vllm-instance
+
+# Test connectivity from llm-d pod
+oc exec -it deployment/llm-d -- curl http://llama-vllm-instance-1-predictor:8080/v1/models
+
+# If DNS fails, use full service names:
+# http://llama-vllm-instance-1-predictor.your-namespace.svc.cluster.local:8080
+----
+
+== Exercise 2: Configure llm-d monitoring
+
+Set up comprehensive monitoring for llm-d performance metrics.
+
+=== Create ServiceMonitor for llm-d
+
+[source,bash]
+----
+cat > llm-d-servicemonitor.yaml << 'EOF'
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: llm-d-metrics
+spec:
+  selector:
+    matchLabels:
+      app: llm-d
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+EOF
+----
+
+Apply the ServiceMonitor:
+
+[source,bash]
+----
+oc apply -f llm-d-servicemonitor.yaml
+----
+
+=== Import llm-d Grafana dashboard
+
+Import the llm-d dashboard to visualize:
+* Request routing decisions
+* Cache hit rates per backend
+* Latency per backend
+* Throughput and load distribution
+
+1. Open Grafana
+2. Navigate to **Dashboards → Import**
+3. Upload `llm-d-dashboard.json` (provided in workshop materials)
+4. Select Prometheus data source
+5. Click **Import**
+
+Key panels in llm-d dashboard:
+* **Cache hit rate**: Percentage of requests benefiting from KV cache
+* **Routing distribution**: Which backend received each request
+* **Backend utilization**: Load per vLLM instance
+* **Prefix similarity**: How similar incoming requests are
+* **Throughput comparison**: Aggregate throughput across all backends
+
+=== Verify metrics are flowing
+
+[source,bash]
+----
+# Port-forward to llm-d metrics endpoint
+oc port-forward svc/llm-d 9090:9090 &
+
+# Fetch llm-d metrics
+curl http://localhost:9090/metrics | grep llm_d
+
+# Stop port-forward
+pkill -f "port-forward"
+----
+
+Look for metrics like:
+* `llm_d_requests_total`
+* `llm_d_cache_hit_rate`
+* `llm_d_routing_decision_duration_seconds`
+* `llm_d_backend_requests_total{backend="vllm-instance-1"}`
+
+== Exercise 3: Run llm-d benchmarks
+
+Now run the same benchmarks against llm-d to measure the improvement from intelligent routing.
+
+=== Warm up the system
+
+Before benchmarking, send some requests to prime the caches:
+
+[source,bash]
+----
+# Send warmup requests with shared prefixes
+for i in {1..50}; do
+  curl -k https://${LLMD_URL}/v1/completions \
+    -H "Content-Type: application/json" \
+    -d '{
+      "model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+      "prompt": "You are a helpful customer service agent. User asks: How can I help you?",
+      "max_tokens": 30
+    }' &
+done
+wait
+----
+
+This primes the KV caches with the system prompt.
+
+=== Run benchmark - Medium load
+
+[source,bash]
+----
+# Get llm-d URL
+LLMD_URL=$(oc get route llm-d -o jsonpath='{.spec.host}')
+
+# Run benchmark
+guidellm \
+  --target https://${LLMD_URL}/v1/completions \
+  --model meta-llama/Meta-Llama-3.1-8B-Instruct \
+  --data customer-service-prompts.txt \
+  --rate 10 \
+  --max-requests 200 \
+  --output-format json \
+  --output-file llmd-4gpu-medium.json
+----
+
+Expected results (compared to naive scaling):
+* **Throughput**: 80-120 req/s (vs. 60-90 naive)
+* **TTFT (P50)**: 250-400ms (20-30% improvement)
+* **ITL**: 18-28ms (slight improvement)
+
+=== Run benchmark - High load
+
+[source,bash]
+----
+# Run high-load benchmark
+guidellm \
+  --target https://${LLMD_URL}/v1/completions \
+  --model meta-llama/Meta-Llama-3.1-8B-Instruct \
+  --data customer-service-prompts.txt \
+  --rate 50 \
+  --max-requests 400 \
+  --output-format json \
+  --output-file llmd-4gpu-high.json
+----
+
+Expected results:
+* **Throughput**: 220-280 req/s (vs. 150-180 naive) → **45-65% improvement**
+* **TTFT (P50)**: 300-450ms
+* **TTFT (P95)**: 500-700ms (vs. 800-1100 naive) → **30-40% improvement**
+* **ITL**: 20-30ms
+* **P95 Latency**: 600-800ms (vs. 900-1300 naive) → **25-35% improvement**
+
+=== Run benchmark - Very high load
+
+Test the new saturation point:
+
+[source,bash]
+----
+# Run very-high-load benchmark
+guidellm \
+  --target https://${LLMD_URL}/v1/completions \
+  --model meta-llama/Meta-Llama-3.1-8B-Instruct \
+  --data customer-service-prompts.txt \
+  --rate 100 \
+  --max-requests 500 \
+  --output-format json \
+  --output-file llmd-4gpu-very-high.json
+----
+
+Expected results:
+* **Throughput**: Plateaus at ~250-280 req/s
+* **TTFT (P95)**: 700-900ms
+* System saturated at much higher throughput than naive scaling
+
+== Exercise 4: Analyze llm-d performance gains
+
+Compare all three configurations: single GPU, naive 4 GPU, and llm-d 4 GPU by analyzing your benchmark results.
+
+== Exercise 5: Monitor cache effectiveness in Grafana
+
+Watch llm-d in action during a benchmark run:
+
+1. Open Grafana llm-d dashboard
+2. Run a high-load benchmark
+3. Observe in real-time:
+   * **Cache hit rate**: Should reach 60-80% for workload with shared prefixes
+   * **Routing decisions**: Requests with similar prefixes go to same backends
+   * **Backend utilization**: Some backends see higher traffic (those with hot caches)
+   * **Latency distribution**: Lower P95 due to cache hits
+
+Compare this to the naive scaling dashboard from Module 3:
+* Naive: All backends equally loaded, low cache hit rates
+* llm-d: Uneven but intentional distribution, high cache hit rates
+
+Take screenshots showing:
+* Cache hit rate over time
+* Routing distribution (which backend handled which requests)
+* Throughput comparison between naive and llm-d
+
+== Exercise 6: Test with different workload patterns
+
+Understand when llm-d provides value by testing different prompt patterns.
+
+=== Test 1: High prefix similarity (ParasolCloud's actual workload)
+
+This is what you've been testing - shared system prompts.
+
+Results: 70% cache hit rate, 53% throughput improvement.
+
+=== Test 2: Low prefix similarity
+
+Create a dataset with completely unique prompts:
+
+[source,bash]
+----
+cat > unique-prompts.txt << 'EOF'
+Write a poem about mountains
+Explain quantum physics
+What is the capital of Peru
+Describe a sunset
+How does photosynthesis work
+Why is the sky blue
+Tell me about ancient Rome
+Explain machine learning
+EOF
+----
+
+Run benchmark with unique prompts:
+
+[source,bash]
+----
+guidellm \
+  --target https://${LLMD_URL}/v1/completions \
+  --model meta-llama/Meta-Llama-3.1-8B-Instruct \
+  --data unique-prompts.txt \
+  --rate 50 \
+  --max-requests 200 \
+  --output-format json \
+  --output-file llmd-unique-prompts.json
+----
+
+Expected results:
+* Cache hit rate: ~5-10% (minimal sharing)
+* Throughput: ~180-200 req/s (similar to naive scaling)
+* llm-d overhead: ~5% (minimal)
+
+**Insight**: llm-d doesn't hurt performance for unique prompts, but doesn't help much either. Benefit depends on workload prefix similarity.
+
+=== Test 3: Partial prefix sharing
+
+Mix of shared and unique:
+
+[source,bash]
+----
+cat > mixed-prompts.txt << 'EOF'
+You are a helpful customer service agent. User asks: How do I reset my password?
+Translate this to French: Hello world
+You are a helpful customer service agent. User asks: What are your business hours?
+Write a haiku about coding
+You are a helpful customer service agent. User asks: How can I track my order?
+EOF
+----
+
+Run benchmark:
+
+[source,bash]
+----
+guidellm \
+  --target https://${LLMD_URL}/v1/completions \
+  --model meta-llama/Meta-Llama-3.1-8B-Instruct \
+  --data mixed-prompts.txt \
+  --rate 50 \
+  --max-requests 200 \
+  --output-format json \
+  --output-file llmd-mixed-prompts.json
+----
+
+Expected results:
+* Cache hit rate: ~30-40% (partial sharing)
+* Throughput: ~210-230 req/s (moderate improvement)
+
+**Insight**: Even partial prefix sharing provides measurable benefits.
+
+== Module 4 summary
+
+**What you accomplished:**
+* Deployed llm-d orchestrator with Precise Prefix Cache Aware Routing
+* Configured llm-d to manage 4 vLLM backend instances
+* Set up comprehensive monitoring with Grafana
+* Ran benchmarks demonstrating 53% throughput improvement and 35% latency reduction
+* Quantified business value: 33% GPU cost savings for ParasolCloud's target capacity
+
+**Key takeaways:**
+* llm-d enables **super-linear scaling** (5.2x with 4 GPUs vs. theoretical 4x)
+* Cache hit rates improve from 10% (naive) to 70% (llm-d) for shared-prefix workloads
+* Same hardware (4 GPUs) delivers 260 req/s (llm-d) vs. 170 req/s (naive) = **53% improvement**
+* P95 latency improves from 1000ms to 650ms = **35% improvement**
+* Benefit scales with prefix similarity: High similarity = high benefit
+
+**ParasolCloud's business case:**
+* **Target**: 500 req/s for client expansion
+* **Naive scaling**: 12 GPUs required, $120k/year
+* **llm-d scaling**: 8 GPUs required, $80k/year
+* **Savings**: $40k/year (33% cost reduction)
+* **Better UX**: 36% faster P95 latency (700ms vs. 1100ms)
+* **ROI**: Immediate - savings start day 1
+
+**Why llm-d works:**
+* Analyzes prompt prefixes
+* Routes similar requests to same backends
+* Maximizes KV cache reuse
+* Eliminates redundant computation on shared prefixes
+* Turns 300 tokens of waste into 300 tokens of cache hits
+
+**When llm-d provides value:**
+* Workloads with shared prefixes (system prompts, common contexts)
+* High-traffic multi-tenant services
+* Chat/agent platforms with consistent instructions
+* Any scenario with >30% prefix similarity
+
+**Next steps:**
+Module 5 will recap your journey, synthesize the technical findings into customer-facing messaging, and discuss deployment patterns for production llm-d adoption.
