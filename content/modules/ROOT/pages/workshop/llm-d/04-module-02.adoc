@@ -202,7 +202,7 @@ Once the InferenceService shows `Ready`, test it:
 [source,bash]
 ----
 # Get the inference URL
-INFERENCE_URL=$(oc get inferenceservice llama-vllm-single -o jsonpath='{.status.url}')
+INFERENCE_URL=$(oc get inferenceservice llama-vllm-single -o jsonpath='{.status.url}'):8080
 echo $INFERENCE_URL
 
 # Test with curl
@@ -212,7 +212,7 @@ curl -k ${INFERENCE_URL}/v1/models
 curl -k ${INFERENCE_URL}/v1/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+    "model": "llama-vllm-single",
     "prompt": "San Francisco is a",
     "max_tokens": 50,
     "temperature": 0.7
@@ -332,122 +332,67 @@ Key panels to monitor:
 
 NOTE: Dashboard files should be provided in workshop materials. If not available, create custom panels for the metrics listed above.
 
-== Exercise 3: Run GuideLLM benchmarks with Jupyter Notebook
+== Exercise 3: Run GuideLLM benchmarks
 
-Now establish your performance baseline by running comprehensive benchmarks with GuideLLM using a pre-configured Jupyter notebook.
+Now establish your performance baseline by running comprehensive benchmarks with GuideLLM from the terminal.
 
-=== Access the benchmark notebook
+=== Get the inference URL
 
-The workshop provides a Jupyter notebook that automates the benchmarking process:
-
-**Notebook location**: `notebooks/module-02-vllm-baseline-benchmark.ipynb`
-
-This notebook will:
-* Install and configure GuideLLM
-* Create ParasolCloud's customer service dataset (with shared system prompts)
-* Run three benchmark scenarios: low, medium, and high load
-* Analyze results and generate visualizations
-* Document baseline performance metrics
-
-=== Launch JupyterLab
-
-If you're using OpenShift AI workbench:
+First, retrieve your InferenceService URL:
 
 [source,bash]
 ----
-# Access your workbench JupyterLab instance
-# Navigate to: OpenShift AI > Data Science Projects > Your Project > Workbenches
+# Get the inference URL
+INFERENCE_URL=$(oc get inferenceservice llama-vllm-single -o jsonpath='{.status.url}')
+echo "INFERENCE_URL: ${INFERENCE_URL}"
+
+# Verify the endpoint is accessible
+curl -k ${INFERENCE_URL}/v1/models
 ----
 
-If you're running locally:
+=== Run baseline benchmark
+
+Run a benchmark to establish your single-GPU baseline performance:
 
 [source,bash]
 ----
-# Navigate to the workshop directory
-cd /path/to/llm-d-showroom
-
-# Launch JupyterLab
-jupyter lab
+# Run baseline benchmark with sweep profile
+guidellm benchmark \
+  --target "${INFERENCE_URL}" \
+  --profile sweep \
+  --max-seconds 60 \
+  --processor meta-llama/Meta-Llama-3.1-8B-Instruct \
+  --data "prompt_tokens=256,output_tokens=128"
 ----
 
-=== Run the benchmark notebook
-
-1. Open `notebooks/module-02-vllm-baseline-benchmark.ipynb`
-2. Review the notebook introduction and objectives
-3. Execute cells sequentially (Shift+Enter) or use "Run All Cells"
-
-The notebook performs these steps:
-
-**Setup (Cells 1-3)**:
-* Installs GuideLLM
-* Configures output directories
-* Retrieves your InferenceService URL
-
-**Dataset Creation (Cell 4)**:
-* Generates 16 customer service prompts with shared prefix
-* Saves to `benchmark-results/module-02/customer-service-prompts.txt`
-
-**Benchmarks (Cells 5-7)**:
-* Low load: 1 concurrent request, 50 total requests
-* Medium load: 5 concurrent requests, 100 total requests
-* High load: 20 concurrent requests, 200 total requests
-
-**Analysis (Cells 8-10)**:
-* Loads benchmark results
-* Creates performance summary table
-* Generates throughput and latency visualizations
-
-**Observations (Cell 11)**:
-* Documents key findings
-* Calculates ParasolCloud's GPU requirements
-* Identifies optimization opportunities
+**What this benchmark does**:
+* `--profile sweep`: Runs multiple load levels to find saturation point
+* `--max-seconds 60`: Runs for 60 seconds per load level
+* `--processor`: Specifies the tokenizer for accurate token counting
+* `--data`: Generates synthetic prompts with 256 input tokens and 128 output tokens
 
 === Monitor in Grafana
 
-While the benchmarks run (especially the high-load benchmark in Cell 7):
+While the benchmark runs:
 
 1. Open your vLLM Grafana dashboard
 2. Watch metrics in real-time:
-   * Requests per second climbing to saturation (~50 req/s)
+   * Requests per second climbing to saturation
    * GPU cache usage increasing
    * Active requests matching concurrency settings
-3. Take screenshots of peak performance
+3. Note the P95 TTFT as load increases
 
-💡 **TIP**: The high-load benchmark takes 5-7 minutes - perfect time to explore Grafana!
+=== Analyze results
 
-=== Review your results
+GuideLLM will output performance metrics including:
 
-After the notebook completes, you'll have:
+* **Throughput**: Requests per second at various load levels
+* **TTFT (Time to First Token)**: P50, P95, P99 latencies
+* **ITL (Inter-Token Latency)**: Token generation speed
 
-**Benchmark data**:
-* `benchmark-results/module-02/baseline-single-low.json`
-* `benchmark-results/module-02/baseline-single-medium.json`
-* `benchmark-results/module-02/baseline-single-high.json`
-
-**Analysis outputs**:
-* `benchmark-results/module-02/baseline-summary.csv` - Performance metrics table
-* `benchmark-results/module-02/baseline-performance.png` - Throughput and latency charts
-* `benchmark-results/module-02/baseline-observations.txt` - Key findings
-
-**Expected baseline metrics** (approximate):
-* Maximum throughput: ~50 req/s (single GPU saturated)
-* TTFT P95: ~900ms under high load
-* P95 Latency: ~1000ms under high load
-* Scaling requirement: ~10 GPUs needed for ParasolCloud's 500 req/s target
+Record your P95 TTFT values - you'll compare them against scaled deployments in Module 3 and llm-d in Module 4.
 
 === Troubleshooting
-
-**Issue**: Notebook can't find InferenceService URL
-
-**Solution**:
-[source,bash]
-----
-# Manually check InferenceService status
-oc get inferenceservice llama-vllm-single
-
-# If not Ready, wait or check logs
-oc logs -l serving.kserve.io/inferenceservice=llama-vllm-single
-----
 
 **Issue**: GuideLLM benchmarks fail with connection errors
 
@@ -459,36 +404,32 @@ INFERENCE_URL=$(oc get inferenceservice llama-vllm-single -o jsonpath='{.status.
 curl -k ${INFERENCE_URL}/v1/models
 ----
 
-**Issue**: Benchmarks are very slow
+**Issue**: "processor not found" error
 
-**Solution**: This is expected for high-load scenarios. The high-load benchmark (200 requests at 20 concurrent) takes 5-7 minutes.
+**Solution**: Ensure you have access to the tokenizer:
+[source,bash]
+----
+# If using a gated model, set HF_TOKEN
+export HF_TOKEN=your_token_here
+----
 
 == Module 2 summary
 
 **What you accomplished:**
 * Deployed Llama 3.1 8B Instruct using KServe and vLLM on single GPU
 * Configured Grafana monitoring for vLLM metrics
-* Ran comprehensive GuideLLM benchmarks at low, medium, and high load using Jupyter notebook
-* Generated performance visualizations and analysis reports
-* Established baseline: ~50 req/s throughput, ~900ms P95 TTFT
+* Ran GuideLLM benchmark to establish baseline performance
+* Recorded your baseline P95 TTFT under load
 
 **Key takeaways:**
-* Single GPU provides ~50 req/s maximum throughput for 8B model
-* Latency degrades significantly when approaching saturation (400ms → 900ms TTFT P95)
+* Single GPU has limited capacity before latency degrades
+* Tail latency (P95/P99) degrades significantly when approaching saturation
 * vLLM metrics in Grafana provide real-time performance visibility
-* Jupyter notebooks streamline benchmarking workflows with automated analysis
+* Your most frustrated users (P95/P99) experience significantly higher latency than median
 
 **ParasolCloud's baseline:**
-* Current capacity: ~50 req/s per GPU
-* Target capacity: 500+ req/s (10x current capacity)
-* Naive calculation: Need ~10 GPUs for linear 10x scaling
-* Key question: Can intelligent orchestration improve this ratio?
-
-**Artifacts generated:**
-* Benchmark results (JSON) for all three load levels
-* Performance summary table (CSV)
-* Throughput and latency visualizations (PNG)
-* Baseline observations document
+* Record your baseline P95 TTFT - you'll compare this in later modules
+* Key question: Will adding more GPUs reduce tail latency?
 
 **Next steps:**
-Module 3 will scale your vLLM deployment to 4 GPUs using naive horizontal scaling and measure the actual throughput improvement. You'll discover why simple scaling doesn't deliver linear gains - and why KV cache sharing matters.
+Module 3 will scale your vLLM deployment to 4 GPUs using naive horizontal scaling. You'll discover a critical insight: **more GPUs increase capacity but don't fix tail latency**.

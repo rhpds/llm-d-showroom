@@ -3,7 +3,7 @@
 :toc: macro
 :toclevels: 2
 
-You've proven that 4 GPUs with naive scaling don't reduce P95/P99 tail latency—your most frustrated users still wait 850-950ms. Now it's time to deploy llm-d with Precise Prefix Cache Aware Routing to dramatically reduce tail latency through intelligent cache reuse.
+You've proven that 4 GPUs with naive scaling don't significantly reduce P95/P99 tail latency—your most frustrated users still experience slow responses. Now it's time to deploy llm-d with Precise Prefix Cache Aware Routing to dramatically reduce tail latency through intelligent cache reuse.
 
 In this module, you'll deploy llm-d to orchestrate your 4 vLLM instances with cache-aware routing, run the same benchmarks, and measure the P95/P99 improvements.
 
@@ -58,6 +58,57 @@ llm-d uses the **LLMInferenceService** custom resource to deploy an intelligent 
 * Deploys multiple vLLM inference pool replicas
 * Configures the llm-d router with intelligent scheduling plugins
 * Enables **precise-prefix-cache-scorer** for cache-aware routing
+
+=== Create HuggingFace token secret
+
+The LLMInferenceService needs access to HuggingFace to download the model and tokenizer. Create a secret with your HuggingFace token:
+
+[source,bash]
+----
+# Create secret with your HuggingFace token
+oc create secret generic hf-secret \
+  --from-literal=HF_TOKEN=your_hf_token_here
+----
+
+NOTE: If your workshop environment has pre-cached models, this step may be optional. Check with your instructor.
+
+=== Configure storage initializer for HuggingFace
+
+Create a ClusterStorageContainer to configure the storage-initializer with HuggingFace authentication:
+
+[source,bash]
+----
+cat > hf-storage-container.yaml << 'EOF'
+apiVersion: serving.kserve.io/v1alpha1
+kind: ClusterStorageContainer
+metadata:
+  name: hf-hub
+spec:
+  container:
+    name: storage-initializer
+    image: 'kserve/storage-initializer:latest'
+    env:
+      - name: HF_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: hf-secret
+            key: HF_TOKEN
+            optional: false
+    resources:
+      requests:
+        memory: 2Gi
+        cpu: '1'
+      limits:
+        memory: 4Gi
+        cpu: '1'
+  supportedUriFormats:
+    - prefix: 'hf://'
+EOF
+
+oc apply -f hf-storage-container.yaml
+----
+
+This ClusterStorageContainer ensures that any InferenceService using `hf://` URIs will have access to the HuggingFace token during model download.
 
 === Create the LLMInferenceService
 
@@ -143,6 +194,11 @@ spec:
     containers:
       - name: main
         env:
+          - name: HF_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: hf-secret
+                key: HF_TOKEN
           - name: VLLM_ADDITIONAL_ARGS
             value: "--disable-uvicorn-access-log --max-model-len=4096 --gpu-memory-utilization=0.9"
         resources:
@@ -169,6 +225,8 @@ EOF
 **Key configuration elements**:
 
 * **`replicas: 4`**: Deploys 4 vLLM inference pool instances
+* **`ClusterStorageContainer`**: Configures storage-initializer with HuggingFace token for model download
+* **`containers[main].env.HF_TOKEN`**: Configures HuggingFace token for vLLM runtime and tokenizer access
 * **`precise-prefix-cache-scorer`**: The intelligent routing plugin (weight: 3)
 * **`queue-scorer`**: Balances queue depth (weight: 2)
 * **`kv-cache-utilization-scorer`**: Optimizes cache memory usage (weight: 2)
@@ -417,67 +475,40 @@ wait
 
 This primes the KV caches with the system prompt across llm-d's routing decisions.
 
-=== Scenario 1: Single-turn with large shared prefixes
+=== Run llm-d benchmark
 
-Test whether cache-aware routing reduces tail latency for shared system prompts:
+Run the same benchmark you performed in Modules 2 and 3, now against llm-d:
 
 [source,bash]
 ----
 # Get llm-d URL
-LLMD_URL=$(oc get route llm-d -o jsonpath='{.spec.host}')
+LLMD_URL=$(oc get llminferenceservice llama-llm-d -o jsonpath='{.status.url}')
+echo "LLMD_URL: ${LLMD_URL}"
 
-# Run Scenario 1 - High load
-guidellm \
-  --target https://${LLMD_URL}/v1/completions \
-  --model meta-llama/Meta-Llama-3.1-8B-Instruct \
-  --data single-turn-prompts.txt \
-  --rate 20 \
-  --max-requests 200 \
-  --output-format json \
-  --output-file llmd-4gpu-scenario1-high.json
+# Run benchmark with sweep profile
+guidellm benchmark \
+  --target "${LLMD_URL}" \
+  --profile sweep \
+  --max-seconds 60 \
+  --processor meta-llama/Meta-Llama-3.1-8B-Instruct \
+  --data "prompt_tokens=256,output_tokens=128"
 ----
 
-**Expected P95/P99 latency improvements**:
-* **Naive 4 GPU P95 TTFT**: ~850ms
-* **llm-d 4 GPU P95 TTFT**: ~400-500ms → **40-50% improvement!**
-* **Naive 4 GPU P99 TTFT**: ~1150ms
-* **llm-d 4 GPU P99 TTFT**: ~600-700ms → **45-50% improvement!**
+=== Compare results
 
-**Why it works**:
-* llm-d routes requests with shared prefixes to same backend
-* Cache hits eliminate 300-token system prompt computation
+Compare your P95 TTFT results across all three configurations:
+
+* **Single GPU (Module 2)**: Your baseline P95 TTFT
+* **4 GPUs naive (Module 3)**: Your scaled P95 TTFT
+* **4 GPUs llm-d (this module)**: Your llm-d P95 TTFT
+
+**Why llm-d works**:
+* llm-d routes requests with similar prefixes to the same backend
+* Cache hits eliminate redundant prefill computation
 * P95/P99 users benefit from cached prefill
 * **Your most frustrated users now get much faster responses**
 
-=== Scenario 2: Multi-turn chat conversations
-
-Test whether cache-aware routing dramatically improves multi-turn conversation latency:
-
-[source,bash]
-----
-# Run Scenario 2 - Multi-turn chat
-guidellm \
-  --target https://${LLMD_URL}/v1/completions \
-  --model meta-llama/Meta-Llama-3.1-8B-Instruct \
-  --data multi-turn-prompts.txt \
-  --rate 5 \
-  --max-requests 50 \
-  --output-format json \
-  --output-file llmd-4gpu-scenario2-multiturn.json
-----
-
-**Expected behavior**:
-* Conversation turns routed to same backend (cache reuse!)
-* Each turn benefits from cached context
-* **P95/P99 latency dramatically reduced** compared to naive scaling
-
-**Comparison with naive scaling**:
-* **Naive Turn 2 P95**: ~850ms (cache miss, recomputed history)
-* **llm-d Turn 2 P95**: ~350-450ms → **~50% improvement!**
-* **Naive Turn 3 P95**: ~950ms
-* **llm-d Turn 3 P95**: ~400-500ms → **~50% improvement!**
-
-**The key difference**: llm-d routes follow-up turns to the same backend, ensuring cache hits. Naive scaling routes randomly, causing cache misses and forcing recomputation of growing conversation history.
+**The key difference**: llm-d routes similar requests to the same backend, ensuring cache hits. Naive scaling routes randomly, causing cache misses and forcing recomputation.
 
 == Exercise 4: Analyze llm-d performance gains
 
@@ -488,110 +519,52 @@ Compare all three configurations: single GPU, naive 4 GPU, and llm-d 4 GPU by an
 Watch llm-d's cache-aware routing directly improve tail latency in real-time:
 
 1. Open Grafana llm-d dashboard
-2. Run Scenario 1 high-load benchmark
+2. Run the benchmark
 3. Observe in real-time:
-   * **Cache hit rate**: Should reach 60-80% for workload with shared prefixes
+   * **Cache hit rate**: Should increase for workloads with shared prefixes
    * **Routing decisions**: Requests with similar prefixes consistently route to same backends
    * **Backend utilization**: Uneven but intentional (hot caches get more traffic)
-   * **P95/P99 latency**: Significantly lower than naive scaling
+   * **P95/P99 latency**: Compare to your Module 3 results
 
 **Key metrics to watch**:
-* **Cache hit rate climbing**: Starts low, climbs to 60-80% as system warms up
-* **P95 TTFT dropping**: From 850ms (naive) to 400-500ms (llm-d)
+* **Cache hit rate climbing**: Starts low, climbs as system warms up
 * **Routing affinity**: Similar prompts cluster on same backend
 
 Compare this to the naive scaling dashboard from Module 3:
-* **Naive**: All backends equally loaded, 5-10% cache hit rate, P95 TTFT ~850ms
-* **llm-d**: Uneven but intentional distribution, 60-80% cache hit rate, P95 TTFT ~450ms
+* **Naive**: All backends equally loaded, low cache hit rate
+* **llm-d**: Uneven but intentional distribution, higher cache hit rate
 
 Take screenshots showing:
-* Cache hit rate over time (climbing to 60-80%)
-* P95/P99 latency comparison chart
+* Cache hit rate over time
+* P95/P99 latency comparison
 * Routing distribution showing cache affinity
 
-== Exercise 6: Test with different workload patterns
+== Exercise 6: Understanding when llm-d provides value
 
-Understand when llm-d provides value by testing different prompt patterns.
+llm-d's benefit depends on workload characteristics:
 
-=== Test 1: High prefix similarity (ParasolCloud's actual workload)
+=== High prefix similarity (best case)
 
-This is what you've been testing - shared system prompts.
+Workloads with shared system prompts or common prefixes benefit most from llm-d. This includes:
+* Customer service chatbots with shared system prompts
+* Multi-turn conversations
+* Applications with consistent instruction prefixes
 
-Results: 70% cache hit rate, 53% throughput improvement.
+=== Low prefix similarity
 
-=== Test 2: Low prefix similarity
+For completely unique prompts with no shared prefixes:
+* Cache hit rate will be low
+* Performance similar to naive scaling
+* llm-d doesn't hurt, but doesn't help much
 
-Create a dataset with completely unique prompts:
+=== Partial prefix sharing
 
-[source,bash]
-----
-cat > unique-prompts.txt << 'EOF'
-Write a poem about mountains
-Explain quantum physics
-What is the capital of Peru
-Describe a sunset
-How does photosynthesis work
-Why is the sky blue
-Tell me about ancient Rome
-Explain machine learning
-EOF
-----
+Mixed workloads with some shared prefixes:
+* Moderate cache hit rates
+* Proportional P95/P99 improvements
+* Even partial prefix sharing provides measurable benefits
 
-Run benchmark with unique prompts:
-
-[source,bash]
-----
-guidellm \
-  --target https://${LLMD_URL}/v1/completions \
-  --model meta-llama/Meta-Llama-3.1-8B-Instruct \
-  --data unique-prompts.txt \
-  --rate 50 \
-  --max-requests 200 \
-  --output-format json \
-  --output-file llmd-unique-prompts.json
-----
-
-Expected results:
-* Cache hit rate: ~5-10% (minimal sharing)
-* Throughput: ~180-200 req/s (similar to naive scaling)
-* llm-d overhead: ~5% (minimal)
-
-**Insight**: llm-d doesn't hurt performance for unique prompts, but doesn't help much either. Benefit depends on workload prefix similarity.
-
-=== Test 3: Partial prefix sharing
-
-Mix of shared and unique:
-
-[source,bash]
-----
-cat > mixed-prompts.txt << 'EOF'
-You are a helpful customer service agent. User asks: How do I reset my password?
-Translate this to French: Hello world
-You are a helpful customer service agent. User asks: What are your business hours?
-Write a haiku about coding
-You are a helpful customer service agent. User asks: How can I track my order?
-EOF
-----
-
-Run benchmark:
-
-[source,bash]
-----
-guidellm \
-  --target https://${LLMD_URL}/v1/completions \
-  --model meta-llama/Meta-Llama-3.1-8B-Instruct \
-  --data mixed-prompts.txt \
-  --rate 50 \
-  --max-requests 200 \
-  --output-format json \
-  --output-file llmd-mixed-prompts.json
-----
-
-Expected results:
-* Cache hit rate: ~30-40% (partial sharing)
-* Throughput: ~210-230 req/s (moderate improvement)
-
-**Insight**: Even partial prefix sharing provides measurable benefits.
+**Key insight**: The more prefix similarity in your workload, the more llm-d helps reduce tail latency.
 
 == Module 4 summary
 
@@ -599,39 +572,41 @@ Expected results:
 * Deployed llm-d orchestrator with Precise Prefix Cache Aware Routing
 * Configured llm-d to intelligently manage 4 vLLM backend instances
 * Set up comprehensive monitoring with Grafana to track cache hits and P95/P99 latency
-* Ran benchmarks across both scenarios demonstrating **dramatic tail latency reductions**
+* Ran benchmarks demonstrating tail latency improvements with cache-aware routing
 * Proved that intelligent routing solves the problem naive scaling couldn't
 
 **Key takeaways - The Tail Latency Breakthrough:**
-* **P95 TTFT**: Improved from ~850ms (naive) to ~450ms (llm-d) = **~50% reduction!**
-* **P99 TTFT**: Improved from ~1150ms (naive) to ~650ms (llm-d) = **~45% reduction!**
-* **Multi-turn P95**: Improved from ~850ms (naive) to ~400ms (llm-d) = **~53% reduction!**
-* **Cache hit rates**: Improved from 5-10% (naive) to 60-80% (llm-d)
-* **Your most frustrated users**: Now get responses **2x faster**
+
+Compare your results across all three configurations:
+
+[source,text]
+----
+=== Your Results Summary ===
+
+Single GPU (Module 2):
+- P95 TTFT: _______ (your recorded value)
+
+4 GPUs Naive (Module 3):
+- P95 TTFT: _______ (your recorded value)
+- Improvement over single GPU: _______ %
+
+4 GPUs llm-d (Module 4):
+- P95 TTFT: _______ (your recorded value)
+- Improvement over naive: _______ %
+----
 
 **The critical insight:**
 * Same hardware (4 GPUs)
 * Same capacity (requests per second)
 * But **dramatically different customer experience** for P95/P99 users
-* **Cache-aware routing eliminates the tail latency problem**
-
-**ParasolCloud's customer experience transformation:**
-* **Before (naive 4 GPU)**: 5% of customers wait 850-1150ms → frustrated, file complaints
-* **After (llm-d 4 GPU)**: 5% of customers wait 450-650ms → satisfied, positive experience
-* **Impact**: Reduced customer complaints, improved satisfaction scores, better retention
-* **Target achieved**: P95 TTFT now within 450-500ms range (target was <300ms, much closer!)
+* **Cache-aware routing reduces the tail latency problem**
 
 **Why llm-d works for tail latency:**
 * **Analyzes prompt prefixes** and routes similar requests to same backend
-* **Maximizes KV cache hits**: 60-80% of requests benefit from cached prefill
-* **Eliminates redundant computation**: Shared 300-token prefixes cached, not recomputed
+* **Maximizes KV cache hits**: Requests benefit from cached prefill
+* **Eliminates redundant computation**: Shared prefixes cached, not recomputed
 * **Routes multi-turn to same backend**: Conversation history stays cached
 * **Directly attacks the P95/P99 problem**: Cache hits mean your worst-case users avoid queuing
-
-**Scenario results summary:**
-* **Scenario 1 (single-turn shared prefixes)**: 50% P95 TTFT reduction
-* **Scenario 2 (multi-turn conversations)**: 53% P95 TTFT reduction for follow-ups
-* **Benefit scales with prefix similarity**: More sharing = more improvement
 
 **When llm-d provides value:**
 * Workloads with shared prefixes (system prompts, common contexts)
@@ -641,4 +616,4 @@ Expected results:
 
 **Workshop complete!**
 
-You've successfully demonstrated that intelligent cache-aware routing dramatically reduces tail latency for your most frustrated users. You now have the data and experience to advocate for llm-d deployment in production environments where P95/P99 latency matters.
+You've successfully demonstrated that intelligent cache-aware routing reduces tail latency for your most frustrated users. You now have the data and experience to advocate for llm-d deployment in production environments where P95/P99 latency matters.

@@ -64,7 +64,7 @@ cat > llama-vllm-scaled.yaml << 'EOF'
 apiVersion: serving.kserve.io/v1beta1
 kind: InferenceService
 metadata:
-  name: llama-vllm-single
+  name: llama-vllm-scaled
   annotations:
     serving.kserve.io/deploymentMode: RawDeployment
 spec:
@@ -189,59 +189,38 @@ oc apply -f vllm-scaled-servicemonitor.yaml
 
 Create or update your Grafana dashboard to show aggregate metrics across all replicas, especially cache hit rates.
 
-=== Scenario 1: Single-turn with large shared prefixes
+=== Run the benchmark
 
-Test whether adding GPUs reduces tail latency for requests with shared system prompts:
-
-[source,bash]
-----
-# Get InferenceService URL
-INFERENCE_URL=$(oc get inferenceservice llama-vllm-scaled -o jsonpath='{.status.url}')
-
-# Run Scenario 1 - High load
-guidellm \
-  --target ${INFERENCE_URL}/v1/completions \
-  --model meta-llama/Meta-Llama-3.1-8B-Instruct \
-  --data single-turn-prompts.txt \
-  --rate 20 \
-  --max-requests 200 \
-  --output-format json \
-  --output-file scaled-4gpu-scenario1-high.json
-----
-
-**Expected P95/P99 latency** (compared to single GPU):
-* **Single GPU P95 TTFT**: ~900ms
-* **4 GPUs P95 TTFT**: ~850-950ms (**minimal improvement!**)
-* **Capacity increased**: Yes (4x throughput)
-* **Tail latency reduced**: ❌ **No significant improvement**
-
-**Why?** Round-robin routing spreads requests across 4 replicas. Every replica recomputes the 300-token system prompt because cache misses occur on every request.
-
-=== Scenario 2: Multi-turn chat conversations
-
-Test whether adding GPUs improves multi-turn conversation latency:
+Run the same benchmark you performed in Module 2, now against the scaled deployment:
 
 [source,bash]
 ----
 # Get InferenceService URL
 INFERENCE_URL=$(oc get inferenceservice llama-vllm-scaled -o jsonpath='{.status.url}')
+echo "INFERENCE_URL: ${INFERENCE_URL}"
 
-# Run Scenario 2 - Multi-turn chat
-guidellm \
-  --target ${INFERENCE_URL}/v1/completions \
-  --model meta-llama/Meta-Llama-3.1-8B-Instruct \
-  --data multi-turn-prompts.txt \
-  --rate 5 \
-  --max-requests 50 \
-  --output-format json \
-  --output-file scaled-4gpu-scenario2-multiturn.json
+# Run benchmark with sweep profile
+guidellm benchmark \
+  --target "${INFERENCE_URL}" \
+  --profile sweep \
+  --max-seconds 60 \
+  --processor meta-llama/Meta-Llama-3.1-8B-Instruct \
+  --data "prompt_tokens=256,output_tokens=128"
 ----
 
-**Expected behavior**:
-* Conversation turns randomly distributed across 4 replicas
-* Each turn lands on a different replica (cache miss)
-* **P95/P99 latency remains high** despite having 4 GPUs
-* Growing context recomputed on every turn
+=== Compare results
+
+Compare your P95 TTFT results:
+
+* **Single GPU (Module 2)**: Record your baseline P95 TTFT
+* **4 GPUs (this module)**: Record your scaled P95 TTFT
+
+**Critical observation**: Despite having 4x the GPUs, you should observe that P95/P99 latency shows minimal improvement. Capacity (throughput) increases, but tail latency does not significantly improve.
+
+**Why?** Round-robin routing spreads requests across 4 replicas. Each replica maintains its own isolated KV cache, so cache misses occur frequently - especially for:
+
+1. **Single-turn requests**: Each replica recomputes shared system prompts
+2. **Multi-turn conversations**: Conversation turns land on different replicas, causing cache misses on every turn
 
 **The problem**: With 4 replicas and round-robin routing, only 25% chance a follow-up lands on the same replica. 75% of conversation turns experience cache misses.
 
@@ -249,66 +228,39 @@ guidellm \
 
 Compare your single-GPU and 4-GPU P95/P99 latency results.
 
-=== Create tail latency comparison
+=== Record your comparison
 
-[source,bash]
+Create a comparison of your results:
+
+[source,text]
 ----
-cat > tail-latency-comparison.txt << 'EOF'
 === Tail Latency Comparison: 1 GPU vs. 4 GPUs ===
 
-Scenario 1: Single-turn with Large Shared Prefixes
----------------------------------------------------
-Single GPU (High Load):
-- P50 TTFT: ~400ms
-- P95 TTFT: ~900ms
-- P99 TTFT: ~1200ms
-- Cache hit rate: ~10%
+Single GPU (Module 2):
+- P95 TTFT: _______ (your recorded value)
 
-4 GPUs (High Load, Round-Robin):
-- P50 TTFT: ~350ms (slight improvement)
-- P95 TTFT: ~850ms (**barely improved**)
-- P99 TTFT: ~1150ms (**barely improved**)
-- Cache hit rate: ~8% (worse due to cache fragmentation!)
+4 GPUs with Round-Robin (Module 3):
+- P95 TTFT: _______ (your recorded value)
 
-**Result**: Adding 4x GPUs does NOT significantly reduce tail latency.
-**Your most frustrated users**: Still waiting 850-1150ms.
+Improvement: _______ %
+----
 
-Scenario 2: Multi-turn Chat Conversations
-------------------------------------------
-Single GPU:
-- P95 TTFT (Turn 1): ~600ms
-- P95 TTFT (Turn 2): ~800ms
-- P95 TTFT (Turn 3): ~900ms
-- Cache behavior: Sequential turns on same GPU, some cache benefit
+=== The fundamental problem
 
-4 GPUs (Round-Robin):
-- P95 TTFT (Turn 1): ~550ms
-- P95 TTFT (Turn 2): ~850ms (**WORSE than single GPU!**)
-- P95 TTFT (Turn 3): ~950ms (**WORSE than single GPU!**)
-- Cache behavior: Turns land on different GPUs = cache misses
-
-**Result**: Multi-turn conversations actually experience WORSE latency
-with naive scaling because each turn hits a different instance.
-
-The Fundamental Problem
------------------------
 **Capacity vs. Latency**:
-- Capacity (throughput): 4 GPUs = 4x improvement ✅
-- Tail latency (P95/P99): 4 GPUs = minimal or NO improvement ❌
+* Capacity (throughput): 4 GPUs = ~4x improvement ✅
+* Tail latency (P95/P99): 4 GPUs = minimal or NO improvement ❌
 
 **Why tail latency doesn't improve**:
-- Every request recomputes 300-token system prompt (cache miss)
-- Multi-turn conversations spread across replicas (no cache reuse)
-- Round-robin routing ignores cache state (random placement)
-- 4 isolated caches = 4x wasted prefill computation
+* Every request may recompute shared prefixes (cache miss)
+* Multi-turn conversations spread across replicas (no cache reuse)
+* Round-robin routing ignores cache state (random placement)
+* 4 isolated caches = wasted prefill computation
 
 **ParasolCloud's Challenge**:
-- Customer complaints about slow responses continue
-- P95 latency still 850-950ms (target: <300ms)
-- Adding more GPUs won't solve the tail latency problem
-- Need intelligent cache-aware routing to reduce P95/P99
-EOF
-----
+* Customer complaints about slow responses continue
+* Adding more GPUs won't solve the tail latency problem
+* Need intelligent cache-aware routing to reduce P95/P99
 
 === Visualize the tail latency problem
 
@@ -316,81 +268,63 @@ The key problem is cache isolation causing high P95/P99 latency:
 
 [source,text]
 ----
-Scenario 1: Single-turn requests (round-robin routing)
-
+Single-turn requests (round-robin routing)
+------------------------------------------
 Request 1: "System prompt... User asks: reset password?"
-  → Routes to Replica 1 (TTFT: 400ms)
-  → Computes full 350 tokens
-  → Caches in Replica 1
+  → Routes to Replica 1
+  → Computes full prefix, caches result
 
 Request 2: "System prompt... User asks: business hours?"
-  → Routes to Replica 2 (TTFT: 900ms - P95!)
-  → Cache miss! Recomputes 300-token system prompt
-  → Hits queue behind other requests
-  → **High P95 latency due to redundant prefill + queuing**
+  → Routes to Replica 2 (round-robin)
+  → Cache miss! Recomputes entire system prompt
+  → **Redundant prefill computation**
 
 Request 3: "System prompt... User asks: track order?"
-  → Routes to Replica 3 (TTFT: 850ms - P95!)
-  → Cache miss! Recomputes system prompt
-  → **Another frustrated user**
+  → Routes to Replica 3
+  → Cache miss! Recomputes system prompt again
+  → **Another cache miss**
 
-Scenario 2: Multi-turn conversation (round-robin routing)
+Multi-turn conversation (round-robin routing)
+---------------------------------------------
+Turn 1: "Customer: I have a problem."
+  → Routes to Replica 1
+  → Computes full context, caches result
 
-Turn 1: "System prompt... Customer: I have a problem."
-  → Routes to Replica 1 (TTFT: 500ms)
-  → Computes full context
-
-Turn 2: "System prompt... Customer: I have a problem. Agent: ... Customer: Follow-up?"
-  → Routes to Replica 3 (TTFT: 950ms - P95!)
+Turn 2: "Customer: I have a problem. Agent: ... Customer: Follow-up?"
+  → Routes to Replica 3 (round-robin)
   → Cache miss! Recomputes entire conversation history
   → **Multi-turn latency spike**
 
 Turn 3: Growing context...
-  → Routes to Replica 2 (TTFT: 1100ms - P99!)
+  → Routes to Replica 2
   → Cache miss! Recomputes everything again
   → **Your most frustrated user**
 ----
 
 === The tail latency insight
 
-[source,bash]
-----
-cat > tail-latency-insight.txt << 'EOF'
-=== Why More GPUs Don't Fix Tail Latency ===
+**Why More GPUs Don't Fix Tail Latency:**
 
-The Capacity vs. Latency Distinction:
---------------------------------------
 **Capacity (throughput)**: How many requests per second
-- More GPUs = More capacity ✅
-- 4 GPUs = 4x throughput (200 req/s)
+* More GPUs = More capacity ✅
 
 **Tail Latency (P95/P99)**: Experience of your most frustrated users
-- More GPUs ≠ Better P95/P99 ❌
-- 4 GPUs = Same or worse P95/P99 latency
+* More GPUs ≠ Better P95/P99 ❌
 
-Why Naive Scaling Fails for Tail Latency:
-------------------------------------------
-1. **Cache fragmentation**: 4 isolated caches = 4x cache misses
-2. **Random routing**: Unlucky users hit busy replicas or cache misses
+**Why Naive Scaling Fails for Tail Latency:**
+
+1. **Cache fragmentation**: 4 isolated caches = cache misses
+2. **Random routing**: Requests hit different replicas randomly
 3. **Redundant prefill**: Every replica recomputes shared prefixes
 4. **Multi-turn disasters**: Conversations spread across replicas
 
-ParasolCloud's Reality:
------------------------
-- ✅ Can handle 4x more traffic (capacity improved)
-- ❌ Customers still complain about slow responses (P95 unchanged)
-- ❌ Most frustrated users see no improvement
-- ❌ Multi-turn conversations might be WORSE
+**The Solution Needed:**
 
-The Solution Needed:
---------------------
 **Intelligent cache-aware routing** that:
-- Routes similar requests to same replica (cache hits)
-- Routes conversation turns to same replica (context reuse)
-- Eliminates redundant prefill computation
-- **Directly reduces P95/P99 latency**
-EOF
-----
+* Routes similar requests to same replica (cache hits)
+* Routes conversation turns to same replica (context reuse)
+* Eliminates redundant prefill computation
+* **Directly reduces P95/P99 latency**
 
 == Exercise 4: Observe cache behavior in Grafana
 
@@ -415,27 +349,24 @@ These visualizations demonstrate the problem llm-d solves.
 
 **What you accomplished:**
 * Scaled vLLM deployment from 1 to 4 GPUs with round-robin load balancing
-* Ran benchmarks for both scenarios: single-turn shared prefixes and multi-turn conversations
+* Ran benchmarks to compare tail latency with more GPUs
 * Demonstrated the critical insight: **More GPUs ≠ Better P95/P99 latency**
-* Measured that 4 GPUs provide minimal or no tail latency improvement
 
 **Key takeaways:**
 * **Capacity vs. Latency**: 4 GPUs increase throughput (capacity) but don't reduce tail latency
-* **P95/P99 barely improves**: Single GPU ~900ms → 4 GPUs ~850ms (only 50ms improvement!)
-* **Multi-turn gets worse**: Conversation turns spread across instances cause more cache misses
+* **P95/P99 barely improves**: Compare your results - you should see minimal improvement
 * **Critical insight**: Round-robin routing + isolated caches = persistent tail latency problems
 
 **The fundamental problem:**
 * 4 vLLM replicas = 4 isolated KV caches
 * Round-robin routing spreads requests randomly (ignores cache state)
-* System prompt (300 tokens) recomputed on every request (cache misses)
+* Shared prefixes recomputed on every replica (cache misses)
 * Multi-turn conversations recompute entire history on each turn
 * **Your most frustrated users (P95/P99) see no improvement**
 
 **ParasolCloud's reality:**
-* ✅ Capacity increased: 4x throughput (200 req/s)
-* ❌ Customer complaints continue: P95 latency still ~850-950ms
-* ❌ Target P95 latency <300ms: Not achieved
+* ✅ Capacity increased with more GPUs
+* ❌ Customer complaints continue: P95 latency not significantly improved
 * ❌ Most frustrated users: Still experiencing slow responses
 
 **The critical distinction:**
@@ -446,4 +377,4 @@ These visualizations demonstrate the problem llm-d solves.
 Can intelligent cache-aware routing dramatically reduce P95/P99 latency without adding more hardware?
 
 **Next steps:**
-Module 4 will deploy llm-d with Precise Prefix Cache Aware Routing. You'll configure llm-d to orchestrate your 4 vLLM replicas intelligently, routing requests to maximize cache hits and directly reduce P95/P99 latency. The goal: Deliver <300ms P95 TTFT to dramatically improve the experience for your most frustrated customers.
+Module 4 will deploy llm-d with Precise Prefix Cache Aware Routing. You'll configure llm-d to orchestrate your 4 vLLM replicas intelligently, routing requests to maximize cache hits and directly reduce P95/P99 latency.

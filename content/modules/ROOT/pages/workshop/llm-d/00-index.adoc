@@ -56,9 +56,7 @@ Establish your tail latency baseline:
 
 * Deploy Llama 3.1 8B Instruct on a single GPU using KServe and vLLM
 * Configure Grafana dashboard for real-time latency metrics
-* Run GuideLLM benchmarks testing different scenarios:
-  - Single-turn with large prompts (prefill bottleneck)
-  - Multi-turn chat (KV cache reuse potential)
+* Run GuideLLM benchmarks from the terminal
 * Measure P50, P95, P99 latency under load
 
 **Outcome**: Baseline showing where tail latency problems emerge.
@@ -67,9 +65,9 @@ Establish your tail latency baseline:
 
 Discover why naive scaling doesn't fix tail latency:
 
-* Deploy 4 independent vLLM instances (1 per GPU)
-* Configure round-robin load balancing
-* Run the same benchmark scenarios (single-turn large prompts, multi-turn chat)
+* Deploy vLLM with 4 replicas (1 per GPU) using InferenceService
+* Observe round-robin load balancing with isolated KV caches
+* Run the same benchmark and compare P95/P99 latency
 * Compare P95/P99 latency: Does adding GPUs help your worst-case users?
 
 **Outcome**: Understanding that more GPUs ≠ better P95/P99 (isolated caches = wasted prefill work).
@@ -78,13 +76,13 @@ Discover why naive scaling doesn't fix tail latency:
 
 Fix tail latency with intelligent cache-aware routing:
 
-* Deploy llm-d with Precise Prefix Cache Aware Routing
-* Configure llm-d to manage your 4 vLLM backend instances
-* Run the same benchmark scenarios
+* Deploy llm-d with Precise Prefix Cache Aware Routing using LLMInferenceService
+* Configure llm-d to manage 4 vLLM backend instances
+* Run the same benchmark
 * **Measure P95/P99 improvements**: How much better is the experience for your most frustrated users?
 * Observe cache hit rates and routing decisions in Grafana
 
-**Outcome**: Demonstrable proof that intelligent routing dramatically reduces tail latency—especially for multi-turn chat and shared-prefix workloads.
+**Outcome**: Demonstrable proof that intelligent routing reduces tail latency for shared-prefix workloads.
 
 
 == What you'll demonstrate
@@ -192,9 +190,9 @@ Module 5 provides:
 By the end of the workshop, you'll have:
 
 ✓ **Deployed three configurations** - single GPU, 4 GPU naive scaling, 4 GPU with llm-d
-✓ **Generated real benchmark data** - P50/P95/P99 latency, cache hit rates across two scenarios
+✓ **Generated real benchmark data** - P50/P95/P99 latency, cache hit rates
 ✓ **Demonstrated the critical insight** - More GPUs ≠ Better P95/P99
-✓ **Measured dramatic improvements** - 50% P95/P99 latency reduction with llm-d
+✓ **Measured P95/P99 latency improvements** with llm-d compared to naive scaling
 ✓ **Understanding when llm-d helps** - Shared prefixes and multi-turn conversations
 
 **Most importantly**: You'll understand that llm-d's value is in **making your most frustrated customers happy** through tail latency reduction.
