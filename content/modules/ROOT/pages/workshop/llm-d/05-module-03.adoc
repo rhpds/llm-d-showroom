@@ -64,36 +64,31 @@ cat > llama-vllm-scaled.yaml << 'EOF'
 apiVersion: serving.kserve.io/v1beta1
 kind: InferenceService
 metadata:
-  name: llama-vllm-scaled
+  name: llama-vllm-single
   annotations:
-    openshift.io/display-name: llama-vllm-scaled
-    serving.knative.openshift.io/enablePassthrough: 'true'
-    sidecar.istio.io/inject: 'true'
-    sidecar.istio.io/rewriteAppHTTPProbers: 'true'
-  labels:
-    opendatahub.io/dashboard: 'true'
+    serving.kserve.io/deploymentMode: RawDeployment
 spec:
   predictor:
-    minReplicas: 4
+    automountServiceAccountToken: false
+    imagePullSecrets:
+      - name: secret-pafskz
     maxReplicas: 4
+    minReplicas: 4
     model:
       modelFormat:
         name: vLLM
-      runtime: vllm-runtime
-      storageUri: hf://meta-llama/Meta-Llama-3.1-8B-Instruct
+      name: ''
       resources:
         limits:
-          cpu: '8'
-          memory: 24Gi
+          cpu: '2'
+          memory: 4Gi
           nvidia.com/gpu: '1'
         requests:
           cpu: '2'
-          memory: 16Gi
+          memory: 4Gi
           nvidia.com/gpu: '1'
-    tolerations:
-      - effect: NoSchedule
-        key: nvidia.com/gpu
-        operator: Exists
+      runtime: llama
+      storageUri: 'oci://registry.redhat.io/rhelai1/modelcar-llama-3-1-8b-instruct-fp8-dynamic:1.5'
 EOF
 ----
 

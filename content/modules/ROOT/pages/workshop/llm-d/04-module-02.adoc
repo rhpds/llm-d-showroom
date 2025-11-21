@@ -54,32 +54,32 @@ kind: ServingRuntime
 metadata:
   name: vllm-runtime
 spec:
-  supportedModelFormats:
-    - name: vLLM
-      version: "1"
-      autoSelect: true
+  annotations:
+    opendatahub.io/kserve-runtime: vllm
+    prometheus.io/path: /metrics
+    prometheus.io/port: '8080'
   containers:
-    - name: kserve-container
-      image: quay.io/modh/vllm:0.6.0-rocm
+    - args:
+        - '--port=8080'
+        - '--model=/mnt/models'
+        - '--served-model-name={{.Name}}'
+        - '--max-model-len=8000'
       command:
         - python
-        - -m
+        - '-m'
         - vllm.entrypoints.openai.api_server
-      args:
-        - --model=$(MODEL_NAME)
-        - --port=8080
-        - --max-model-len=4096
-        - --gpu-memory-utilization=0.9
       env:
-        - name: MODEL_NAME
-          value: "{{.modelName}}"
         - name: HF_HOME
           value: /tmp/hf_home
-      resources:
-        limits:
-          nvidia.com/gpu: "1"
-        requests:
-          nvidia.com/gpu: "1"
+      image: 'registry.redhat.io/rhaiis/vllm-cuda-rhel9@sha256:ad756c01ec99a99cc7d93401c41b8d92ca96fb1ab7c5262919d818f2be4f3768'
+      name: kserve-container
+      ports:
+        - containerPort: 8080
+          protocol: TCP
+  multiModel: false
+  supportedModelFormats:
+    - autoSelect: true
+      name: vLLM
 EOF
 ----
 
@@ -125,13 +125,26 @@ metadata:
     serving.kserve.io/deploymentMode: RawDeployment
 spec:
   predictor:
+    automountServiceAccountToken: false
+    imagePullSecrets:
+      - name: secret-pafskz
+    maxReplicas: 1
+    minReplicas: 1
     model:
       modelFormat:
-        name: pytorch
-      runtime: vllm-runtime
-      storageUri: hf://meta-llama/Meta-Llama-3.1-8B-Instruct
-      # If using PVC with pre-cached model, use:
-      # storageUri: pvc://model-cache/llama-3.1-8b
+        name: vLLM
+      name: ''
+      resources:
+        limits:
+          cpu: '2'
+          memory: 4Gi
+          nvidia.com/gpu: '1'
+        requests:
+          cpu: '2'
+          memory: 4Gi
+          nvidia.com/gpu: '1'
+      runtime: llama
+      storageUri: 'oci://registry.redhat.io/rhelai1/modelcar-llama-3-1-8b-instruct-fp8-dynamic:1.5'
 EOF
 ----
 
