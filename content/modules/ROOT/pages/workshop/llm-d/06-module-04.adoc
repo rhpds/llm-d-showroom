@@ -72,44 +72,6 @@ oc create secret generic hf-secret \
 
 NOTE: If your workshop environment has pre-cached models, this step may be optional. Check with your instructor.
 
-=== Configure storage initializer for HuggingFace
-
-Create a ClusterStorageContainer to configure the storage-initializer with HuggingFace authentication:
-
-[source,bash]
-----
-cat > hf-storage-container.yaml << 'EOF'
-apiVersion: serving.kserve.io/v1alpha1
-kind: ClusterStorageContainer
-metadata:
-  name: hf-hub
-spec:
-  container:
-    name: storage-initializer
-    image: 'kserve/storage-initializer:latest'
-    env:
-      - name: HF_TOKEN
-        valueFrom:
-          secretKeyRef:
-            name: hf-secret
-            key: HF_TOKEN
-            optional: false
-    resources:
-      requests:
-        memory: 2Gi
-        cpu: '1'
-      limits:
-        memory: 4Gi
-        cpu: '1'
-  supportedUriFormats:
-    - prefix: 'hf://'
-EOF
-
-oc apply -f hf-storage-container.yaml
-----
-
-This ClusterStorageContainer ensures that any InferenceService using `hf://` URIs will have access to the HuggingFace token during model download.
-
 === Create the LLMInferenceService
 
 Create the llm-d configuration with 4 replicas and precise-prefix-cache-aware routing:
@@ -125,6 +87,7 @@ metadata:
     opendatahub.io/model-type: generative
     openshift.io/display-name: llama-llm-d
     security.opendatahub.io/enable-auth: 'false'
+    serving.kserve.io/storageSecretName: hf-secret
 spec:
   replicas: 4
   model:
@@ -225,7 +188,7 @@ EOF
 **Key configuration elements**:
 
 * **`replicas: 4`**: Deploys 4 vLLM inference pool instances
-* **`ClusterStorageContainer`**: Configures storage-initializer with HuggingFace token for model download
+* **`serving.kserve.io/storageSecretName`**: Annotation that tells KServe to mount `hf-secret` into storage-initializer
 * **`containers[main].env.HF_TOKEN`**: Configures HuggingFace token for vLLM runtime and tokenizer access
 * **`precise-prefix-cache-scorer`**: The intelligent routing plugin (weight: 3)
 * **`queue-scorer`**: Balances queue depth (weight: 2)
@@ -238,6 +201,24 @@ EOF
 ----
 oc apply -f llm-d-inference.yaml
 ----
+
+=== Verify HuggingFace token configuration
+
+Before the deployment completes, verify the HF_TOKEN is properly configured:
+
+[source,bash]
+----
+# Wait for the deployment to be created
+sleep 10
+
+# Check that storage-initializer has HF_TOKEN environment variable
+oc get deployment llama-llm-d-kserve -o jsonpath='{.spec.template.spec.initContainers[0].env[*].name}' | grep -q HF_TOKEN && echo "✓ HF_TOKEN configured in storage-initializer" || echo "✗ HF_TOKEN missing in storage-initializer"
+
+# Check that main container has HF_TOKEN environment variable
+oc get deployment llama-llm-d-kserve -o jsonpath='{.spec.template.spec.containers[0].env[*].name}' | grep -q HF_TOKEN && echo "✓ HF_TOKEN configured in main container" || echo "✗ HF_TOKEN missing in main container"
+----
+
+You should see both checks pass with ✓ marks.
 
 === Monitor deployment progress
 
@@ -263,6 +244,19 @@ This can take 10-15 minutes as each instance downloads the model.
 * **1 Router pod**: The llm-d scheduler with precise-prefix-cache-aware routing
 * **4 Inference pool pods**: vLLM instances (1 per GPU) managed by llm-d
 * **Services and Routes**: Automatically created for external access
+
+**Check storage-initializer logs** (optional):
+
+[source,bash]
+----
+# Get a pod name
+POD=$(oc get pods -l serving.kserve.io/inferenceservice=llama-llm-d -o jsonpath='{.items[0].metadata.name}')
+
+# View storage-initializer logs
+oc logs $POD -c storage-initializer
+----
+
+You may see permission warnings like "Could not set the permissions on the file" - these are harmless and the download will continue successfully.
 
 === Verify llm-d is running
 
