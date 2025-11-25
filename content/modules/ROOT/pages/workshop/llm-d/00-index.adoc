@@ -15,6 +15,46 @@ You'll work through a realistic business scenario as a Platform Engineer at Para
 
 **Your goal**: Evaluate whether llm-d can deliver consistent, low-latency responses—especially for the users currently experiencing the worst performance (P95/P99).
 
+== Understanding tail latency: P95 and P99
+
+Before diving into the workshop, let's understand what P95 and P99 latency mean and why they matter for your users.
+
+**Time to First Token (TTFT)** is one of the critical latency metrics for LLM inference:
+
+* **TTFT**: The time from receiving a request until the first token is generated and streamed back to the user
+* For streaming responses, this is when users see the first word appear
+* Low TTFT creates a responsive, interactive experience
+* High TTFT makes users wait with a blank screen, creating frustration
+
+**Percentile latency** measures the TTFT experienced by a specific percentage of your users:
+
+* **P50 (median)**: 50% of users get a response this fast or faster
+* **P95**: 95% of users get their first token this fast or faster (5% experience worse latency)
+* **P99**: 99% of users get their first token this fast or faster (1% experience worse latency)
+
+**Why P95 and P99 matter more than average:**
+
+Think about a customer service chatbot with these metrics:
+* Average latency: 200ms (looks great!)
+* P50 latency: 180ms (most users happy)
+* P95 latency: 1200ms (5% of users wait over a second)
+* P99 latency: 2500ms (1% of users wait over 2 seconds!)
+
+Your "average" looks excellent, but **5-10% of your customers are having a terrible experience**. These are often your most important users:
+
+* Users during peak traffic periods
+* Users with complex multi-turn conversations
+* Users who happen to hit busy backend instances
+
+**Tail latency = "What your most frustrated users see"**
+
+In production systems, tail latency directly impacts:
+* **Customer satisfaction**: Frustrated users file support tickets or churn
+* **Business metrics**: Slow responses reduce conversion rates and engagement
+* **Service Level Objectives (SLOs)**: P95/P99 targets are critical for production readiness
+
+**This workshop focuses on reducing tail latency** because adding more GPUs improves capacity (throughput) but doesn't necessarily make your worst-case users any happier. You'll learn how intelligent routing can dramatically reduce P95 and P99 latency without adding hardware.
+
 === Hands-on skills you'll gain
 
 By the end of this workshop, you'll be able to:
@@ -121,7 +161,7 @@ Throughout the workshop, you'll work on a realistic business problem:
 **The Challenge**: ParasolCloud's AI-powered customer service platform needs to scale significantly for a major client expansion launching in 90 days.
 
 **Current State**:
-* Single GPU vLLM deployment
+* Monolith vLLM deployment
 * Limited request capacity
 * Customer service chatbot with system prompt shared across queries
 
@@ -180,11 +220,6 @@ Module 5 provides:
 * Module 3: Scale vLLM & Compare Performance - 25 minutes
 * Module 4: Deploy llm-d & Benchmark - 35 minutes
 
-**Pacing tips**:
-* Modules 2-4 are hands-on. If you finish exercises early, help others or experiment with configurations.
-* If you fall behind, the instructor will ensure key concepts are covered. You can complete exercises later.
-* Screenshots and command outputs are provided for reference if time runs short.
-
 == What success looks like
 
 By the end of the workshop, you'll have:
@@ -202,5 +237,3 @@ By the end of the workshop, you'll have:
 Let's start by understanding your role and task. Navigate to the **Overview** section to learn about ParasolCloud's scaling challenge.
 
 Then dive into **Module 1** to build the conceptual foundation for distributed inference optimization.
-
-Welcome aboard, and let's unlock super-linear scaling together!

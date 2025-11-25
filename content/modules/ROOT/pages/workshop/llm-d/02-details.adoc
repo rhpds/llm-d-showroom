@@ -23,103 +23,28 @@ If time is constrained, consider these adjustments:
 == Technical requirements
 
 === Software versions
-* **OpenShift AI** 2.14 or later (includes KServe)
-* **vLLM** 0.6.0 or later
-* **llm-d** 0.3.0 or later
-* **GuideLLM** 0.4.0 or later (benchmark tool)
-* **Grafana** 10.0 or later (for metrics visualization)
-* **Python** 3.10+ (for GuideLLM client)
-* Web browser (Chrome, Firefox, Safari, Edge)
+* **OpenShift AI** 3.0 or later (includes KServe)
+* **vLLM** TBD
+* **llm-d** TBD
+* **GuideLLM** TBD
+* **Grafana** TBD
+* **Python** TBD
+
 
 === Model requirements
-* **Primary model**: Meta-Llama-3.1-8B-Instruct or similar 7-8B parameter model
+* **Primary model**: Meta-Llama-3.1-8B-Instruct
 * **Model storage**: HuggingFace Hub access or pre-cached in cluster PVC
-* **Alternative models**: Mistral-7B-Instruct-v0.3, Granite-8B-Code-Instruct (for variety)
 
-=== Infrastructure requirements
-* **GPU nodes**: 4-8 NVIDIA GPUs (A100, H100, or L40S recommended)
-* **GPU memory**: 40GB+ per GPU for 8B models
-* **CPU/Memory**: 8 CPU cores, 32GB RAM per node
+=== Infrastructure provided
+* **GPU nodes**: 4 NVIDIA L4 GPUs
+* **GPU memory**: 24GB+ per GPU for 8B models
+* **CPU/Memory**: 8 CPU cores, 32GB RAM 
 * **Storage**: 100GB+ for model weights and cache
 * **Network**: Low-latency interconnect for distributed inference (InfiniBand or RoCE preferred)
 
-=== Environment access
-Participants need access to:
+=== Environment 
 
-* **OpenShift AI cluster** (provided during workshop)
-* **KServe serving runtime** configured for vLLM
-* **Model registry or storage** (HuggingFace Hub, S3, PVC)
-* **Grafana dashboard** for metrics visualization
-* **Terminal/CLI access** with oc/kubectl CLI configured
-* **Code editor** (VS Code, vim, or browser-based)
-
-=== Network requirements
-* Internet connectivity for model downloads and package installation
-* Access to registry.redhat.io and quay.io for container images
-* OpenShift cluster API endpoint
-* Grafana dashboard endpoint
-
-== Environment setup
-
-=== Pre-workshop checklist
-□ **OpenShift AI access confirmed** - Test login credentials and namespace access
-□ **oc CLI installed and configured** - Verify `oc whoami` and `oc project` work
-□ **Python 3.10+ installed** - Required for GuideLLM client
-□ **GuideLLM installed** - Run `pip install guidellm` and verify installation
-□ **GPU quota verified** - Ensure namespace has access to required GPU resources
-□ **Model access confirmed** - Verify HuggingFace token or model pre-cached in cluster
-□ **Grafana dashboard imported** - Load vLLM and llm-d monitoring dashboards
-□ **Sample configurations downloaded** - Clone workshop repository with YAML templates
-
-=== Setup validation
-Participants should run these commands to verify setup:
-
-[source,bash]
-----
-# Verify OpenShift AI access
-oc whoami
-oc project  # Should show your assigned namespace
-
-# Verify oc CLI version
-oc version
-
-# Verify Python and GuideLLM
-python3 --version
-guidellm --version
-
-# Verify GPU access in namespace
-oc get nodes -l nvidia.com/gpu.present=true
-
-# Test GPU scheduling
-oc get limits
-oc get resourcequotas
-
-# Verify model storage access (if using PVC)
-oc get pvc
-
-# Verify ServingRuntime available
-oc get servingruntimes -n opendatascience
-----
-
-Expected output:
-* oc commands return successfully with your user and namespace
-* Python 3.10+ and GuideLLM 0.4.0+
-* GPU nodes listed
-* ServingRuntime for vLLM available
-
-=== Installing GuideLLM
-
-[source,bash]
-----
-# Install GuideLLM benchmark tool
-pip install guidellm
-
-# Verify installation
-guidellm --version
-
-# Test basic functionality
-guidellm --help
-----
+TBD
 
 == Environment architecture
 
@@ -129,209 +54,3 @@ guidellm --help
 * **GPU Operator**: NVIDIA GPU resource management
 * **Prometheus**: Metrics collection from vLLM and llm-d
 * **Grafana**: Visualization dashboards for inference metrics
-
-=== Workshop namespace structure
-Each participant receives:
-* Dedicated namespace (e.g., `llm-workshop-user01`)
-* GPU quota allocation (2-4 GPUs)
-* Storage quota for model weights (100GB)
-* Service mesh ingress for external access
-
-== Troubleshooting guide
-
-=== Common setup issues
-
-**Problem**: "Authentication required when accessing HuggingFace models"
-**Solution**: Create HuggingFace access token and configure as secret:
-[source,bash]
-----
-# Create secret with HuggingFace token
-oc create secret generic hf-token \
-  --from-literal=HF_TOKEN=your_token_here
-
-# Reference in InferenceService
-# env:
-# - name: HF_TOKEN
-#   valueFrom:
-#     secretKeyRef:
-#       name: hf-token
-#       key: HF_TOKEN
-----
-
-**Problem**: "GPU resources not available"
-**Solution**: Check node selectors, tolerations, and resource quotas:
-[source,bash]
-----
-# Check GPU nodes
-oc get nodes -l nvidia.com/gpu.present=true
-
-# Check resource quotas
-oc get resourcequotas
-
-# Describe GPU quota
-oc describe resourcequota gpu-quota
-
-# Check if GPU operator is running
-oc get pods -n nvidia-gpu-operator
-----
-
-**Problem**: "Model download taking too long"
-**Solution**: Use pre-cached models or smaller alternatives:
-[source,bash]
-----
-# Check if model PVC exists
-oc get pvc model-cache
-
-# If available, use PVC mount instead of download
-# storageUri: pvc://model-cache/llama-3.1-8b
-----
-
-**Problem**: "GuideLLM benchmark fails to connect to InferenceService"
-**Solution**: Verify route and test connectivity:
-[source,bash]
-----
-# Get InferenceService URL
-oc get inferenceservice llama-vllm -o jsonpath='{.status.url}'
-
-# Test with curl
-curl -k https://your-inference-url/v1/models
-
-# Check if route exists
-oc get route
-
-# If TLS issues, use --insecure flag with GuideLLM
-guidellm --target https://your-url --insecure
-----
-
-**Problem**: "InferenceService stuck in 'Not Ready' state"
-**Solution**: Check ServingRuntime logs and events:
-[source,bash]
-----
-# Check InferenceService status
-oc get inferenceservice llama-vllm -o yaml
-
-# Check pod logs
-oc logs -l serving.kserve.io/inferenceservice=llama-vllm
-
-# Check events
-oc get events --sort-by='.lastTimestamp'
-
-# Common issues:
-# - Image pull errors (check imagePullSecrets)
-# - Resource limits (check GPU quota)
-# - Model download failures (check HF_TOKEN)
-----
-
-**Problem**: "Grafana dashboard shows no metrics"
-**Solution**: Verify ServiceMonitor and metrics endpoint:
-[source,bash]
-----
-# Check if ServiceMonitor exists
-oc get servicemonitor
-
-# Verify vLLM metrics endpoint
-oc get service -l serving.kserve.io/inferenceservice=llama-vllm
-
-# Test metrics endpoint
-oc port-forward svc/llama-vllm-predictor 8080:8080
-curl http://localhost:8080/metrics
-
-# Check Prometheus targets in Grafana UI
-# Navigate to: Status -> Targets
-# Verify vLLM endpoint is listed and UP
-----
-
-**Problem**: "llm-d pods not starting"
-**Solution**: Review llm-d configuration and backend connectivity:
-[source,bash]
-----
-# Check llm-d pod logs
-oc logs -l app=llm-d
-
-# Verify llm-d ConfigMap
-oc get configmap llm-d-config -o yaml
-
-# Check backend vLLM endpoints are reachable
-oc get endpoints
-
-# Verify RBAC permissions for llm-d
-oc get rolebinding llm-d-binding
-----
-
-**Problem**: "High GPU memory usage or OOM errors"
-**Solution**: Adjust vLLM memory configuration:
-[source,bash]
-----
-# Reduce max_model_len in vLLM args
-# args:
-# - --max-model-len=4096  # Instead of 8192
-
-# Enable tensor parallelism for larger models
-# - --tensor-parallel-size=2
-
-# Adjust GPU memory utilization
-# - --gpu-memory-utilization=0.85  # Instead of 0.95
-----
-
-=== During workshop support
-* Encourage participants to help each other with common issues
-* Use screen sharing for complex troubleshooting
-* Have backup pre-deployed environments ready
-* Monitor Slack/chat channel for common problems
-* Keep troubleshooting commands in shared document
-
-== Performance expectations
-
-=== Expected benchmark results (approximate)
-
-**Module 2 - Single vLLM instance (1 GPU)**:
-* Throughput: 40-60 requests/second
-* TTFT (Time to First Token): 200-400ms
-* ITL (Inter-Token Latency): 15-25ms
-* P95 latency: 600-900ms
-
-**Module 3 - Scaled vLLM (4 GPUs, no intelligent routing)**:
-* Throughput: 120-180 requests/second (3-4x improvement)
-* TTFT: 200-450ms (similar, some degradation)
-* ITL: 15-30ms (similar)
-* P95 latency: 700-1000ms (marginal improvement)
-* Cache hit rate: 20-30%
-
-**Module 4 - llm-d with Precise Prefix Cache Aware Routing (4 GPUs)**:
-* Throughput: 200-300 requests/second (5-7x improvement vs. single GPU)
-* TTFT: 150-300ms (20-30% better)
-* ITL: 12-22ms (10-15% better)
-* P95 latency: 400-600ms (40-50% improvement)
-* Cache hit rate: 60-80%
-
-NOTE: Actual results vary based on hardware, model, workload patterns, and cluster conditions. Focus on relative improvements between configurations.
-
-== Follow-up resources
-
-=== Next steps for participants
-* **llm-d documentation**: https://github.com/red-hat-data-services/llm-d (check for latest)
-* **vLLM documentation**: https://docs.vllm.ai/
-* **KServe documentation**: https://kserve.github.io/website/
-* **GuideLLM benchmark guide**: https://github.com/neuralmagic/guidellm
-* **OpenShift AI documentation**: https://access.redhat.com/documentation/en-us/red_hat_openshift_ai/
-
-=== Additional learning paths
-* **Intermediate**: Wide Expert Parallelism for MoE models (DeepSeek R1)
-* **Advanced**: Custom llm-d routing policies and multi-model deployments
-* **Production**: HA deployment patterns, monitoring strategies, autoscaling configurations
-
-=== Community and support
-* **Red Hat OpenShift AI**: https://www.redhat.com/en/technologies/cloud-computing/openshift/openshift-ai
-* **NVIDIA Inference Optimization**: https://developer.nvidia.com/inference
-* **Community forums**: OpenShift community, vLLM GitHub discussions
-
-== Authors and contributors
-
-**Primary Author**: Red Hat AI Platform Team
-**Last Updated**: January 2025
-**Workshop Version**: 1.0
-
-**Contact Information**:
-* Workshop feedback: ai-workshops@redhat.com
-* Technical questions: openshift-ai-support@redhat.com
-* Content updates: https://github.com/red-hat-data-services/llm-d-showroom

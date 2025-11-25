@@ -283,61 +283,6 @@ llm-d is a distributed inference orchestration layer that sits above multiple vL
 
 **Key insight**: From the client perspective, llm-d looks like a single vLLM endpoint. Behind the scenes, it orchestrates multiple instances intelligently.
 
-== Use cases where llm-d delivers value
-
-=== High-traffic multi-tenant LLM service (MaaS)
-
-**Scenario**: Platform serving LLMs to many customers with diverse workloads.
-
-**Why llm-d helps**:
-* Different customers/tenants often use similar system prompts
-* Prefix-aware routing groups similar workloads on same instances
-* Maximizes cache hit rates across tenant boundaries
-
-**Example**: OpenAI-style API serving hundreds of customers with GPT-like models.
-
-=== Chat and agent platforms with system prompts
-
-**Scenario**: Conversational AI with consistent system prompts across user sessions.
-
-**Why llm-d helps**:
-* System prompt KV cache shared across all users
-* Only user-specific messages computed per request
-* 50-70% of prompt computation eliminated
-
-**ParasolCloud's use case**: Customer service chatbot with 300-token system prompt, 100-200 token user queries. Without llm-d, every request recomputes system prompt. With llm-d, 60-80% cache hit rate on system prompt.
-
-=== Large model / long context workloads
-
-**Scenario**: Applications requiring long context windows (16K+ tokens) or very large models.
-
-**Why llm-d helps**:
-* Prefill/decode disaggregation optimizes resource usage per phase
-* Expert parallelism for MoE models reduces communication overhead
-* Better GPU memory management for large KV caches
-
-**Example**: Document analysis, code generation with large codebases, legal document review.
-
-=== Latency-sensitive applications
-
-**Scenario**: Real-time applications where P95 latency matters.
-
-**Why llm-d helps**:
-* Cache-aware routing reduces compute per request
-* Lower P95 latency due to cache hits
-* More predictable performance
-
-**Example**: Live translation, real-time customer service, interactive tutoring.
-
-== When llm-d may NOT be necessary
-
-Be honest about where llm-d doesn't add significant value:
-
-* **Batch inference jobs**: Offline workloads with no latency requirements
-* **Completely unique prompts**: No shared prefixes to cache
-* **Single-GPU deployments**: Orchestration overhead not justified
-* **Very low traffic**: <10 req/s can be handled by single vLLM instance
-
 == Comparing naive scaling vs. llm-d
 
 [cols="3,4,4", options="header"]

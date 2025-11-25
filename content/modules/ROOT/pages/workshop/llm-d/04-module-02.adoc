@@ -101,10 +101,6 @@ oc get servingruntimes
 
 Now deploy the Llama 3.1 8B model using the vLLM runtime.
 
-NOTE: If your environment requires HuggingFace authentication, create a secret first. If models are pre-cached, skip this step.
-
-Optional: Create HuggingFace token secret (if needed):
-
 [source,bash]
 ----
 # Create secret with your HuggingFace token
@@ -146,18 +142,6 @@ spec:
       runtime: llama
       storageUri: 'oci://registry.redhat.io/rhelai1/modelcar-llama-3-1-8b-instruct-fp8-dynamic:1.5'
 EOF
-----
-
-If you created the HF token secret, add this to the spec:
-
-[source,yaml]
-----
-    env:
-      - name: HF_TOKEN
-        valueFrom:
-          secretKeyRef:
-            name: hf-token
-            key: HF_TOKEN
 ----
 
 Apply the InferenceService:
@@ -236,11 +220,7 @@ oc get events --sort-by='.lastTimestamp' | grep llama-vllm-single
 # Common issues:
 # - Image pull: Check image name and pull secrets
 # - GPU quota: Verify GPU resources available
-# - Model download: Check HF_TOKEN if using gated models
 ----
-
-**Issue**: Model download timeout
-**Solution**: Use pre-cached model from PVC or increase timeout in ServingRuntime.
 
 == Exercise 2: Configure Grafana monitoring
 

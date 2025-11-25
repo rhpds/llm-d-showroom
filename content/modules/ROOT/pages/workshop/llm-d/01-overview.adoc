@@ -13,12 +13,6 @@ ParasolCloud needs to improve its AI-powered customer service platform's respons
 
 **The objective**: Provide clear benchmarks showing P95 and P99 latency reductions that justify the architectural shift to llm-d-orchestrated distributed inference.
 
-== ParasolCloud's infrastructure challenges
-
-**The situation**: ParasolCloud needs to scale its AI-powered customer service platform from 500 concurrent users to 5,000+ concurrent users for a major enterprise client expansion launching in 90 days.
-
-**Project timeline**: 90-day evaluation and deployment window for distributed inference architecture assessment and production rollout.
-
 **Current challenges** (operational pain points):
 
 * **Unpredictable tail latency**: No intelligent request routing → Your most frustrated users (P95/P99) experience unacceptably slow responses during peak periods
@@ -29,27 +23,9 @@ ParasolCloud needs to improve its AI-powered customer service platform's respons
 
 **The opportunity**: llm-d technology can address these challenges through cache-aware routing and intelligent inference scheduling, and you've been selected to evaluate its feasibility for ParasolCloud's production deployment.
 
-**Technical perspective**: "llm-d's Precise Prefix Cache Aware Routing has proven benefits in distributed inference environments, but I need to validate how it performs with our specific workload patterns and infrastructure constraints. The key question is: can we dramatically reduce P95 and P99 latency to improve the experience for our most frustrated customers?"
-
-== Your vision of success
-
-If llm-d proves effective for ParasolCloud's use case, here's the potential technical improvements:
-
-**Immediate improvements** (within 90-day evaluation window):
-* **Reduced tail latency**: Cache-aware routing → Dramatically lower P95/P99 response times, especially for your most frustrated users
-* **Consistent multi-turn performance**: KV cache sharing across requests → Follow-up questions in conversations respond faster
-* **Eliminated prefill queuing**: Intelligent scheduling → Large prompts no longer block other requests
-
-**Strategic benefits** (6-12 month horizon):
-* **Improved customer satisfaction**: Lower P95/P99 latency → Better experience for users who previously faced the slowest responses
-* **Predictable performance at scale**: Cache-aware routing maintains low tail latency even under load → Fewer customer complaints during peak hours
-* **Operational simplicity**: Single llm-d control plane → Simplified deployment, monitoring, and scaling versus managing many independent vLLM instances
-
-**Success metric**: Demonstrable P95 and P99 latency reduction through intelligent cache-aware routing, enabling ParasolCloud to deliver consistent, fast responses to all customers—especially those currently experiencing the worst performance.
+**Technical perspective**: "llm-d's Prefix Cache Aware Routing has proven benefits in distributed inference environments, but I need to validate how it performs with our specific workload patterns and infrastructure constraints. The key question is: can we dramatically reduce P95 and P99 latency to improve the experience for our most frustrated customers?"
 
 == What you'll deliver
-
-By the end of this workshop, you'll present a recommendation to ParasolCloud leadership that includes:
 
 * **Baseline tail latency data** - Single GPU vLLM P95/P99 measurements across different scenarios
 * **Naive scaling analysis** - Multi-GPU deployment showing that more GPUs don't fix tail latency
