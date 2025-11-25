@@ -1,6 +1,6 @@
 ---
 site:
-  title: Introducing llm-d: Your Production-Ready Path to Scalable LLM Inference
+  title: "Introducing llm-d: Your Production-Ready Path to Scalable LLM Inference"
   url: https://github.com/rhpds/llm-d-showroom
   start_page: modules::index.adoc
 
