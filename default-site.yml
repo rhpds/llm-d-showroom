@@ -1,7 +1,7 @@
 ---
 site:
-  title: Showroom Template Demo
-  url: https://redhat-scholars.github.io/course-template
+  title: "Introducing llm-d: Your Production-Ready Path to Scalable LLM Inference"
+  url: https://github.com/rhpds/llm-d-showroom
   start_page: modules::index.adoc
 
 content:
@@ -11,7 +11,7 @@ content:
 
 ui:
   bundle:
-    url: https://github.com/rhpds/rhdp_showroom_theme/releases/download/v0.0.1/ui-bundle.zip
+    url: https://github.com/rhpds/rhdp_showroom_theme/releases/download/rh-one-2025/ui-bundle.zip
     snapshot: true
   supplemental_files:
     - path: ./content/supplemental-ui
