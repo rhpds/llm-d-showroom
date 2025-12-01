@@ -23,19 +23,16 @@ ParasolCloud needs a baseline measurement of single-GPU inference performance. Y
 
 First, confirm your OpenShift AI environment is ready:
 
-[source,bash]
+[source,bash,role=execute]
 ----
 # Verify you're logged into OpenShift
 oc whoami
 
-# Check your assigned namespace
-oc project
+# Select your lab namespace
+oc project llm-d-project
 
-# Verify GPU nodes are available
+# Verify GPU node is available
 oc get nodes -l nvidia.com/gpu.present=true
-
-# Check GPU quota in your namespace
-oc get resourcequota
 ----
 
 Expected output: Your username, namespace, GPU nodes listed, and GPU quota showing available resources.
@@ -46,53 +43,58 @@ KServe uses ServingRuntimes to define how models are served. You'll create a vLL
 
 Create a file named `vllm-runtime.yaml`:
 
-[source,bash]
+[source,bash,role=execute]
 ----
-cat > vllm-runtime.yaml << 'EOF'
+cat << 'EOF' | oc apply -f-
 apiVersion: serving.kserve.io/v1alpha1
 kind: ServingRuntime
 metadata:
-  name: vllm-runtime
+  annotations:
+    opendatahub.io/apiProtocol: REST
+    opendatahub.io/recommended-accelerators: '["nvidia.com/gpu"]'
+    opendatahub.io/runtime-version: v3.2.4
+    opendatahub.io/serving-runtime-scope: global
+    openshift.io/display-name: RHAIIS (vLLM) NVIDIA GPU ServingRuntime for KServe
+    openshift.io/template-display-name: RHAIIS (vLLM) NVIDIA GPU ServingRuntime for KServe
+    opendatahub.io/template-name: rhaiis-cuda-template
+  labels:
+    opendatahub.io/dashboard: "true"
+  name: rhaiis-cuda
 spec:
   annotations:
-    opendatahub.io/kserve-runtime: vllm
     prometheus.io/path: /metrics
-    prometheus.io/port: '8080'
+    prometheus.io/port: "8080"
   containers:
-    - args:
-        - '--port=8080'
-        - '--model=/mnt/models'
-        - '--served-model-name={{.Name}}'
-        - '--max-model-len=8000'
-      command:
-        - python
-        - '-m'
-        - vllm.entrypoints.openai.api_server
-      env:
-        - name: HF_HOME
-          value: /tmp/hf_home
-      image: 'registry.redhat.io/rhaiis/vllm-cuda-rhel9@sha256:ad756c01ec99a99cc7d93401c41b8d92ca96fb1ab7c5262919d818f2be4f3768'
-      name: kserve-container
-      ports:
-        - containerPort: 8080
-          protocol: TCP
+  - args:
+    - --port=8080
+    - --model=/mnt/models
+    - --served-model-name={{.Name}}
+    command:
+    - python
+    - -m
+    - vllm.entrypoints.openai.api_server
+    env:
+    - name: HF_HOME
+      value: /tmp/hf_home
+    - name: HF_HUB_OFFLINE
+      value: "1"
+    - name: VLLM_NO_USAGE_STATS
+      value: "1"
+    image: registry.redhat.io/rhaiis/vllm-cuda-rhel9:3.2.4
+    name: kserve-container
+    ports:
+    - containerPort: 8080
+      protocol: TCP
   multiModel: false
   supportedModelFormats:
-    - autoSelect: true
-      name: vLLM
+  - autoSelect: true
+    name: vLLM
 EOF
-----
-
-Apply the ServingRuntime:
-
-[source,bash]
-----
-oc apply -f vllm-runtime.yaml
 ----
 
 Verify the ServingRuntime was created:
 
-[source,bash]
+[source,bash,role=execute]
 ----
 oc get servingruntimes
 ----
@@ -101,67 +103,55 @@ oc get servingruntimes
 
 Now deploy the Llama 3.1 8B model using the vLLM runtime.
 
-[source,bash]
-----
-# Create secret with your HuggingFace token
-oc create secret generic hf-token \
-  --from-literal=HF_TOKEN=your_token_here
-----
-
 Create the InferenceService configuration:
 
-[source,bash]
+[source,bash,role=execute]
 ----
-cat > llama-vllm-single.yaml << 'EOF'
+cat << 'EOF' | oc apply -f-
 apiVersion: serving.kserve.io/v1beta1
 kind: InferenceService
 metadata:
   name: llama-vllm-single
   annotations:
+    openshift.io/display-name: Llama 3.1 8B FP8 Single
     serving.kserve.io/deploymentMode: RawDeployment
+    opendatahub.io/hardware-profile-name: accelerated-profile
+    opendatahub.io/hardware-profile-namespace: redhat-ods-applications
 spec:
   predictor:
     automountServiceAccountToken: false
-    imagePullSecrets:
-      - name: secret-pafskz
     maxReplicas: 1
     minReplicas: 1
+    deploymentStrategy:
+      type: Recreate
     model:
       modelFormat:
         name: vLLM
       name: ''
       resources:
         limits:
-          cpu: '2'
-          memory: 4Gi
+          cpu: '8'
+          memory: 16Gi
           nvidia.com/gpu: '1'
         requests:
           cpu: '2'
-          memory: 4Gi
+          memory: 8Gi
           nvidia.com/gpu: '1'
-      runtime: llama
+      runtime: rhaiis-cuda
       storageUri: 'oci://registry.redhat.io/rhelai1/modelcar-llama-3-1-8b-instruct-fp8-dynamic:1.5'
+      args:
+        - --max-model-len=65536
 EOF
-----
-
-Apply the InferenceService:
-
-[source,bash]
-----
-oc apply -f llama-vllm-single.yaml
 ----
 
 === Monitor deployment progress
 
 Watch the InferenceService status:
 
-[source,bash]
+[source,bash,role=execute]
 ----
-# Watch InferenceService status
+# Watch InferenceService status, use Ctrl+C to cancel when it shows ready
 oc get inferenceservice llama-vllm-single -w
-
-# In another terminal, watch pod creation
-oc get pods -l serving.kserve.io/inferenceservice=llama-vllm-single -w
 ----
 
 The deployment will go through these states:
@@ -169,13 +159,13 @@ The deployment will go through these states:
 2. **InProgress**: Pod creating, model downloading
 3. **Ready**: Model loaded and serving
 
-This can take 5-10 minutes depending on model download speed.
+This can take a few minutes, but the runtime image and model should already be downloaded to your node.
 
 Check logs if there are issues:
 
-[source,bash]
+[source,bash,role=execute]
 ----
-# View container logs
+# View container logs, use Ctrl+C to cancel when you're done watching logs
 oc logs -l serving.kserve.io/inferenceservice=llama-vllm-single -f
 ----
 
@@ -183,7 +173,7 @@ oc logs -l serving.kserve.io/inferenceservice=llama-vllm-single -f
 
 Once the InferenceService shows `Ready`, test it:
 
-[source,bash]
+[source,bash,role=execute]
 ----
 # Get the inference URL
 INFERENCE_URL=$(oc get inferenceservice llama-vllm-single -o jsonpath='{.status.url}'):8080
