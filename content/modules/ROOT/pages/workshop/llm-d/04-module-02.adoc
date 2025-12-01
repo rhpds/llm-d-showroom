@@ -114,7 +114,7 @@ metadata:
   name: llama-vllm-single
   annotations:
     openshift.io/display-name: Llama 3.1 8B FP8 Single
-    security.opendatahub.io/enable-auth: "true"
+    security.opendatahub.io/enable-auth: "false"
     serving.kserve.io/deploymentMode: RawDeployment
     opendatahub.io/hardware-profile-name: accelerated-profile
     opendatahub.io/hardware-profile-namespace: redhat-ods-applications
