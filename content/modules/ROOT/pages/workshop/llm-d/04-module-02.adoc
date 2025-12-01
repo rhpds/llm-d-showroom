@@ -179,21 +179,21 @@ Once the InferenceService shows `Ready`, test it:
 [source,bash,role=execute]
 ----
 # Get the inference URL
-INFERENCE_URL=$(oc get inferenceservice llama-vllm-single -o jsonpath='{.status.url}'):8080
+INFERENCE_URL=$(oc get inferenceservice llama-vllm-single -o jsonpath='{.status.url}')
 echo $INFERENCE_URL
 
 # Test with curl
-curl -k ${INFERENCE_URL}/v1/models
+curl ${INFERENCE_URL}/v1/models
 
 # Send a test request
-curl -k ${INFERENCE_URL}/v1/completions \
+curl ${INFERENCE_URL}/v1/completions \
   -H "Content-Type: application/json" \
   -d '{
     "model": "llama-vllm-single",
     "prompt": "San Francisco is a",
     "max_tokens": 50,
     "temperature": 0.7
-  }'
+  }' | jq .
 ----
 
 Expected output: JSON response with generated text completion.
