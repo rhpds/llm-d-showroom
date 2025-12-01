@@ -32,25 +32,24 @@ If time is constrained, consider these adjustments:
 
 
 === Model requirements
-* **Primary model**: Meta-Llama-3.1-8B-Instruct
-* **Model storage**: HuggingFace Hub access or pre-cached in cluster PVC
+* **Primary model**: Meta-Llama-3.1-8B-Instruct, quantized to FP8
+* **Model storage**: Model Car images provided by Red Hat AI
 
 === Infrastructure provided
-* **GPU nodes**: 4 NVIDIA L4 GPUs
-* **GPU memory**: 24GB+ per GPU for 8B models
-* **CPU/Memory**: 8 CPU cores, 32GB RAM 
-* **Storage**: 100GB+ for model weights and cache
-* **Network**: Low-latency interconnect for distributed inference (InfiniBand or RoCE preferred)
+* **GPU node**: 4 NVIDIA L4 GPUs
+* **GPU memory**: 24GB per GPU
+* **CPU/Memory**: 48 vCPU and 192 GB of RAM
+* **Storage**: 1.5TB for model weights and image cache
+* **Network**: 40Gbps networking
 
-=== Environment 
+=== Environment
 
 TBD
 
 == Environment architecture
 
 === OpenShift AI components
-* **KServe**: Model serving platform managing InferenceServices
-* **ServingRuntime**: vLLM runtime configuration for LLM inference
+* **KServe**: Model serving platform managing ServingRuntimes and InferenceServices
 * **GPU Operator**: NVIDIA GPU resource management
-* **Prometheus**: Metrics collection from vLLM and llm-d
+* **Prometheus (User Workload Monitoring)**: Metrics collection from vLLM and llm-d
 * **Grafana**: Visualization dashboards for inference metrics
