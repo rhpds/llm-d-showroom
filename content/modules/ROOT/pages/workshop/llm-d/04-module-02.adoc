@@ -181,11 +181,17 @@ Once the InferenceService shows `Ready`, test it:
 # Get the inference URL
 INFERENCE_URL=$(oc get inferenceservice llama-vllm-single -o jsonpath='{.status.url}')
 echo $INFERENCE_URL
+----
 
-# Test with curl
-curl ${INFERENCE_URL}/v1/models
+[source,bash,role=execute]
+----
+# Check the list of models to confirm the model name is llama-vllm-single, matching the InferenceService
+curl ${INFERENCE_URL}/v1/models | jq .
+----
 
-# Send a test request
+[source,bash,role=execute]
+----
+# Send a test request to the model
 curl ${INFERENCE_URL}/v1/completions \
   -H "Content-Type: application/json" \
   -d '{
@@ -206,34 +212,41 @@ To understand vLLM performance, you need metrics visualization. You'll configure
 
 vLLM exposes Prometheus metrics on its metrics port. Verify the service is exposing metrics:
 
-[source,bash]
+[source,bash,role=execute]
 ----
-# Find the vLLM service
-oc get svc -l serving.kserve.io/inferenceservice=llama-vllm-single
+# Find the vLLM pod
+POD_NAME=$(oc get pod -l serving.kserve.io/inferenceservice=llama-vllm-single -oname)
+echo $POD_NAME
 
 # Port-forward to test metrics endpoint
-oc port-forward svc/llama-vllm-single-predictor 8080:8080 &
-
-# Fetch metrics (in another terminal or after port-forward runs)
-curl http://localhost:8080/metrics | grep vllm
-
-# Stop port-forward
-pkill -f "port-forward"
+oc port-forward ${POD_NAME} 8080:8080 &
 ----
 
-You should see vLLM-specific metrics like:
+[source,bash,role=execute]
+----
+# Fetch metrics
+curl http://localhost:8080/metrics | grep vllm | less
+----
+
+You should see a lot of vLLM-specific metrics, including:
 * `vllm:num_requests_running`
 * `vllm:num_requests_waiting`
-* `vllm:gpu_cache_usage_perc`
-* `vllm:avg_generation_throughput_toks_per_s`
+* `vllm:kv_cache_usage_perc`
+* `vllm:generation_tokens_total`
+
+[source,bash,role=execute]
+----
+# Stop port-forward when ready
+pkill -f "port-forward"
+----
 
 === Create ServiceMonitor for Prometheus
 
 To collect vLLM metrics in Prometheus, create a ServiceMonitor:
 
-[source,bash]
+[source,bash,role=execute]
 ----
-cat > vllm-servicemonitor.yaml << 'EOF'
+cat << 'EOF' | oc apply -f-
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
@@ -249,21 +262,14 @@ spec:
 EOF
 ----
 
-Apply the ServiceMonitor:
-
-[source,bash]
-----
-oc apply -f vllm-servicemonitor.yaml
-----
-
 === Access Grafana dashboard
 
 Your workshop environment should have a pre-configured Grafana instance. Access it:
 
-[source,bash]
+[source,bash,role=execute]
 ----
 # Get Grafana route
-oc get route grafana -n openshift-monitoring
+oc get route grafana-route -n grafana
 
 # Open in browser (URL from command above)
 ----
