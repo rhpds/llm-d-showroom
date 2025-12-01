@@ -39,9 +39,9 @@ Expected output: Your username, namespace, GPU nodes listed, and GPU quota showi
 
 === Create the vLLM ServingRuntime
 
-KServe uses ServingRuntimes to define how models are served. You'll create a vLLM ServingRuntime configuration.
+KServe uses ServingRuntimes to define how models are served. You'll create a vLLM-based ServingRuntime configuration.
 
-Create a file named `vllm-runtime.yaml`:
+Create the ServingRuntime for Red Hat AI Inference Server.
 
 [source,bash,role=execute]
 ----
