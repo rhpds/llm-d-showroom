@@ -198,23 +198,6 @@ curl ${INFERENCE_URL}/v1/completions \
 
 Expected output: JSON response with generated text completion.
 
-=== Troubleshooting
-
-**Issue**: InferenceService stuck in "Unknown" or "InProgress"
-**Solution**:
-[source,bash]
-----
-# Check pod status
-oc get pods -l serving.kserve.io/inferenceservice=llama-vllm-single
-
-# Check events
-oc get events --sort-by='.lastTimestamp' | grep llama-vllm-single
-
-# Common issues:
-# - Image pull: Check image name and pull secrets
-# - GPU quota: Verify GPU resources available
-----
-
 == Exercise 2: Configure Grafana monitoring
 
 To understand vLLM performance, you need metrics visualization. You'll configure a Grafana dashboard to track vLLM inference metrics.
