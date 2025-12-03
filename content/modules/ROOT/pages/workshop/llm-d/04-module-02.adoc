@@ -36,7 +36,16 @@ oc project llm-d-project
 oc get nodes -l nvidia.com/gpu.present=true
 ----
 
-Expected output: Your username, namespace, GPU nodes listed, and GPU quota showing available resources.
+Example output:
+
+[.console-output]
+[source,bash]
+----
+system:admin
+Now using project "llm-d-project" on server "https://api.cluster-fnj7b.fnj7b.sandbox5571.opentlc.com:6443".
+NAME                                        STATUS   ROLES                         AGE   VERSION
+ip-10-0-47-154.us-east-2.compute.internal   Ready    control-plane,master,worker   24h   v1.33.5
+----
 
 === Create the vLLM ServingRuntime
 
@@ -44,7 +53,8 @@ KServe uses ServingRuntimes to define how models are served. You'll create a vLL
 
 Create the ServingRuntime for Red Hat AI Inference Server.
 
-[source,bash,role=execute]
+[.console-input]
+[source,bash]
 ----
 cat << 'EOF' | oc apply -f-
 apiVersion: serving.kserve.io/v1alpha1
@@ -93,11 +103,12 @@ spec:
 EOF
 ----
 
-Verify the ServingRuntime was created:
+Expected output:
 
-[source,bash,role=execute]
+[.console-output]
+[source,bash]
 ----
-oc get servingruntimes
+servingruntime.serving.kserve.io/rhaiis-cuda created
 ----
 
 === Create the InferenceService
@@ -106,7 +117,8 @@ Now deploy the Llama 3.1 8B model using the vLLM runtime.
 
 Create the InferenceService configuration:
 
-[source,bash,role=execute]
+[.console-input]
+[source,bash]
 ----
 cat << 'EOF' | oc apply -f-
 apiVersion: serving.kserve.io/v1beta1
@@ -148,49 +160,110 @@ spec:
 EOF
 ----
 
+Expected output:
+
+[.console-output]
+[source,bash]
+----
+inferenceservice.serving.kserve.io/llama-vllm-single created
+----
+
 === Monitor deployment progress
 
 Watch the InferenceService status:
 
-[source,bash,role=execute]
+[.console-input]
+[source,bash]
 ----
 # Watch InferenceService status, use Ctrl+C to cancel when it shows ready
 oc get inferenceservice llama-vllm-single -w
 ----
 
-The deployment will go through these states:
-1. **Unknown**: Initial state
-2. **InProgress**: Pod creating, model downloading
-3. **Ready**: Model loaded and serving
+Example output:
 
-This can take a few minutes, but the runtime image and model should already be downloaded to your node.
-
-Check logs if there are issues:
-
-[source,bash,role=execute]
+[.console-output]
+[source,bash]
 ----
-# View container logs, use Ctrl+C to cancel when you're done watching logs
-oc logs -l serving.kserve.io/inferenceservice=llama-vllm-single -f
+NAME                URL                                                                                        READY   PREV   LATEST   PREVROLLEDOUTREVISION   LATESTREADYREVISION   AGE
+llama-vllm-single   https://llama-vllm-single-llm-d-project.apps.cluster-fnj7b.fnj7b.sandbox5571.opentlc.com   False                                                                 4s
+llama-vllm-single   https://llama-vllm-single-llm-d-project.apps.cluster-fnj7b.fnj7b.sandbox5571.opentlc.com   True                                                                  98s
 ----
+
+The deployment will progress to `READY` being `True` after the model is loaded. You can press `Ctrl+C` to cancel once it does.
+The model and serving runtime should already have been downloaded to your node, speeding this up.
 
 === Test the deployment
 
-Once the InferenceService shows `Ready`, test it:
+It's time to make sure your model behaves as expected. First, recover the URL:
 
-[source,bash,role=execute]
+[.console-input]
+[source,bash]
 ----
 # Get the inference URL
 INFERENCE_URL=$(oc get inferenceservice llama-vllm-single -o jsonpath='{.status.url}')
 echo $INFERENCE_URL
 ----
 
-[source,bash,role=execute]
+Example output:
+[.console-output]
+[source,bash]
+----
+https://llama-vllm-single-llm-d-project.apps.cluster-fnj7b.fnj7b.sandbox5571.opentlc.com
+----
+
+Then, make sure the models endpoint returns the model name we expect:
+
+[.console-input]
+[source,bash]
 ----
 # Check the list of models to confirm the model name is llama-vllm-single, matching the InferenceService
 curl ${INFERENCE_URL}/v1/models | jq .
 ----
 
-[source,bash,role=execute]
+Example output:
+
+[.console-output]
+[source,bash]
+----
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+100   479  100   479    0     0  16517      0 --:--:-- --:--:-- --:--:-- 17740
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "llama-vllm-single",
+      "object": "model",
+      "created": 1764775080,
+      "owned_by": "vllm",
+      "root": "/mnt/models",
+      "parent": null,
+      "max_model_len": 65536,
+      "permission": [
+        {
+          "id": "modelperm-5c81cbc429a64795876e782e246ee818",
+          "object": "model_permission",
+          "created": 1764775080,
+          "allow_create_engine": false,
+          "allow_sampling": true,
+          "allow_logprobs": true,
+          "allow_search_indices": false,
+          "allow_view": true,
+          "allow_fine_tuning": false,
+          "organization": "*",
+          "group": null,
+          "is_blocking": false
+        }
+      ]
+    }
+  ]
+}
+----
+
+Now, make sure the model is able to perform inference at one of the OpenAI-compatible endpoints:
+
+[.console-input]
+[source,bash]
 ----
 # Send a test request to the model
 curl ${INFERENCE_URL}/v1/completions \
@@ -203,7 +276,44 @@ curl ${INFERENCE_URL}/v1/completions \
   }' | jq .
 ----
 
-Expected output: JSON response with generated text completion.
+Example output:
+
+[.console-output]
+[source,bash]
+----
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+100   818  100   698  100   120    388     66  0:00:01  0:00:01 --:--:--   455
+{
+  "id": "cmpl-3e58a92a36bd4336b767a26bb089d0df",
+  "object": "text_completion",
+  "created": 1764775084,
+  "model": "llama-vllm-single",
+  "choices": [
+    {
+      "index": 0,
+      "text": " top tourist destination in the United States, attracting millions of visitors each year. From its iconic Golden Gate Bridge to its vibrant neighborhoods like Haight-Ashbury and Fisherman's Wharf, there's no shortage of things to see and do in this",
+      "logprobs": null,
+      "finish_reason": "length",
+      "stop_reason": null,
+      "token_ids": null,
+      "prompt_logprobs": null,
+      "prompt_token_ids": null
+    }
+  ],
+  "service_tier": null,
+  "system_fingerprint": null,
+  "usage": {
+    "prompt_tokens": 5,
+    "total_tokens": 55,
+    "completion_tokens": 50,
+    "prompt_tokens_details": null
+  },
+  "kv_transfer_params": null
+}
+----
+
+So, our single vLLM instance is up and running our Llama model successfully!
 
 == Exercise 2: Configure Grafana monitoring
 
@@ -213,7 +323,8 @@ To understand vLLM performance, you need metrics visualization. You'll configure
 
 vLLM exposes Prometheus metrics on its metrics port. Verify the service is exposing metrics:
 
-[source,bash,role=execute]
+[.console-input]
+[source,bash]
 ----
 # Find the vLLM pod
 POD_NAME=$(oc get pod -l serving.kserve.io/inferenceservice=llama-vllm-single -oname)
@@ -223,7 +334,8 @@ echo $POD_NAME
 oc port-forward ${POD_NAME} 8080:8080 &
 ----
 
-[source,bash,role=execute]
+[.console-input]
+[source,bash]
 ----
 # Fetch metrics
 curl http://localhost:8080/metrics | grep vllm | less
@@ -235,7 +347,8 @@ You should see a lot of vLLM-specific metrics, including:
 * `vllm:kv_cache_usage_perc`
 * `vllm:generation_tokens_total`
 
-[source,bash,role=execute]
+[.console-input]
+[source,bash]
 ----
 # Stop port-forward when ready
 pkill -f "port-forward"
@@ -245,7 +358,8 @@ pkill -f "port-forward"
 
 To collect vLLM metrics in Prometheus, create a ServiceMonitor:
 
-[source,bash,role=execute]
+[.console-input]
+[source,bash]
 ----
 cat << 'EOF' | oc apply -f-
 apiVersion: monitoring.coreos.com/v1
@@ -267,7 +381,8 @@ EOF
 
 Your workshop environment should have a pre-configured Grafana instance. Access it:
 
-[source,bash,role=execute]
+[.console-input]
+[source,bash]
 ----
 # Get Grafana route
 oc get route grafana-route -n grafana
@@ -303,6 +418,7 @@ Now establish your performance baseline by running comprehensive benchmarks with
 
 First, retrieve your InferenceService URL:
 
+[.console-input]
 [source,bash]
 ----
 # Get the inference URL
@@ -317,6 +433,7 @@ curl -k ${INFERENCE_URL}/v1/models
 
 Run a benchmark to establish your single-GPU baseline performance:
 
+[.console-input]
 [source,bash]
 ----
 # Run baseline benchmark with sweep profile
@@ -360,6 +477,7 @@ Record your P95 TTFT values - you'll compare them against scaled deployments in 
 **Issue**: GuideLLM benchmarks fail with connection errors
 
 **Solution**: Verify the vLLM endpoint is accessible:
+[.console-input]
 [source,bash]
 ----
 # Test the endpoint
@@ -370,6 +488,7 @@ curl -k ${INFERENCE_URL}/v1/models
 **Issue**: "processor not found" error
 
 **Solution**: Ensure you have access to the tokenizer:
+[.console-input]
 [source,bash]
 ----
 # If using a gated model, set HF_TOKEN
