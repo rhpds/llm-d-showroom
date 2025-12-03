@@ -381,42 +381,27 @@ Expected output:
 [1]+  Terminated              oc port-forward ${POD_NAME} 8080:8080
 ----
 
-=== Create ServiceMonitor for Prometheus
+=== Verify ServiceMonitor configuration
 
-To collect vLLM metrics in Prometheus from OpenShift User Workload Monitoring (preconfigured on your cluster), create a ServiceMonitor:
+To collect vLLM metrics in Prometheus, we need to enable OpenShift User Workload Monitoring and create a ServiceMonitor.
+Your lab clusters have already had User Workload Monitoring enabled
+(see https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/monitoring/configuring-user-workload-monitoring[the OpenShift documentation] on the topic),
+and OpenShift AI creates the ServiceMonitor for KServe InferenceServices for you. Ensure you see it in your environment:
 
 [.console-input]
 [source,bash]
 ----
-cat << 'EOF' | oc apply -f-
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  name: vllm-metrics
-spec:
-  selector:
-    matchLabels:
-      serving.kserve.io/inferenceservice: llama-vllm-single
-  endpoints:
-    - port: http
-      path: /metrics
-      interval: 30s
-EOF
+oc get servicemonitor llama-vllm-single-metrics
 ----
 
-Expected output:
+Example output:
 
 [.console-output]
 [source,bash]
 ----
-servicemonitor.monitoring.coreos.com/vllm-metrics created
+NAME                        AGE
+llama-vllm-single-metrics   8m
 ----
-
-[NOTE]
-====
-There was a ServiceMonitor created by KServe already, but because we're using a Custom ServingRuntime, it isn't wired up correctly by default.
-You can run `oc get servicemonitor llama-vllm-single-metrics -oyaml` to see it and piece together what changes we'd have to make to use it, if you like.
-====
 
 === Access Grafana dashboard
 
@@ -512,9 +497,57 @@ spec:
           persistentVolumeClaim:
             claimName: guidellm-vllm-single-sweep-results
 EOF
+
+oc logs -f job/guidellm-vllm-single-sweep
+----
+
+Example output (to start):
+
+[.console-output]
+[source,bash]
+----
+✔ OpenAIHTTPBackend backend validated with model llama-vllm-single
+  {'target':
+  'https://llama-vllm-single-llm-d-project.apps.cluster-fnj7b.fnj7b.sandbox5571.
+  opentlc.com', 'model': None, 'timeout': 60.0, 'http2': True,
+  'follow_redirects': True, 'verify': False, 'openai_paths': {'health':
+  'health', 'models': 'v1/models', 'text_completions': 'v1/completions',
+  'chat_completions': 'v1/chat/completions', 'audio_transcriptions':
+  'v1/audio/transcriptions', 'audio_translations': 'v1/audio/translations'},
+  'validate_backend': {'method': 'GET', 'url':
+  'https://llama-vllm-single-llm-d-project.apps.cluster-fnj7b.fnj7b.sandbox5571.
+  opentlc.com/health'}}
+✔ Processor resolved
+  Using processor 'RedHatAI/Meta-Llama-3.1-8B-Instruct-FP8-dynamic'
+✔ Request loader initialized with inf unique requests
+  {'data': "['prompt_tokens=256,output_tokens=128']", 'data_args': '[]',
+  'data_samples': -1, 'preprocessors': ['GenerativeColumnMapper',
+  'GenerativeChatCompletionsRequestFormatter'], 'collator':
+  'GenerativeRequestCollator', 'sampler': 'None', 'num_workers': 1,
+  'random_seed': 42}
+✔ Resolved transient phase configurations
+  Warmup: percent=None value=None mode='prefer_duration'
+  Cooldown: percent=None value=None mode='prefer_duration'
+  Rampup (Throughput/Concurrent): 0.0
+✔ SweepProfile profile resolved
+  {'str': "type_='sweep' completed_strategies=[] constraints={'max_seconds':
+  60.0} rampup_duration=0.0 sweep_size=10 strategy_type='constant'
+  max_concurrency=None random_seed=42 synchronous_rate=-1.0 throughput_rate=-1.0
+  async_rates=[] measured_rates=[] strategy_types=['synchronous', 'throughput',
+  'constant', 'constant', 'constant', 'constant', 'constant', 'constant',
+  'constant', 'constant']", 'type': 'SweepProfile', 'class': 'SweepProfile',
+  'module': 'guidellm.benchmark.profiles', 'attributes': {'type_': 'sweep',
+  'completed_strategies': [], 'constraints': {'max_seconds': 60.0},
+  'rampup_duration': 0.0, 'sweep_size': 10, 'strategy_type': 'constant',
+  'max_concurrency': 'None', 'random_seed': 42, 'synchronous_rate': -1.0,
+  'throughput_rate': -1.0, 'async_rates': [], 'measured_rates': []}}
+✔ Output formats resolved
+  {'json': "output_path=PosixPath('/results/benchmarks.json')"}
+✔ Setup complete, starting benchmarks...
 ----
 
 **What this benchmark does**:
+
 * `--profile=sweep`: Runs multiple load levels to find saturation point
 * `--max-seconds=60`: Runs for 60 seconds per load level
 * `--processor`: Specifies the HuggingFace repository with the tokenizer configuration for accurate token counting
@@ -526,61 +559,58 @@ While the benchmark runs:
 
 1. Open your vLLM Grafana dashboard
 2. Watch metrics in real-time:
-   * Requests per second climbing to saturation
-   * GPU cache usage increasing
-   * Active requests matching concurrency settings
-3. Note the P95 TTFT as load increases
+   * Request Throughput climbing to saturation
+   * GPU Cache usage increasing sharply
+   * The request queue will grow as the sweep ramps up
+3. Note the KV cache hit rates remain relatively low, probably around 11%
+   * This is because the benchmark we are using is synthetically generating random text for the prompts, and so most of the requests are not taking advantage of the amount of cache we have on this instance.
 
 === Analyze results
 
-GuideLLM will output performance metrics including:
+[NOTE]
+====
+GuideLLM will take about ten minutes to complete the full benchmark suite.
+The terminal will hang while this happens.
+You may want to press `Enter` occasionally to prevent the Showroom environment from timing out.
+====
+
+When complete, GuideLLM will output performance metrics including:
 
 * **Throughput**: Requests per second at various load levels
 * **TTFT (Time to First Token)**: P50, P95, P99 latencies
 * **ITL (Inter-Token Latency)**: Token generation speed
 
-Record your P95 TTFT values - you'll compare them against scaled deployments in Module 3 and llm-d in Module 4.
+An example would look like this:
 
-=== Troubleshooting
+image::guidellm-single.png[]
 
-**Issue**: GuideLLM benchmarks fail with connection errors
+As of the time of writing, GuideLLM doesn't have good support for multi-turn benchmarks, but https://github.com/vllm-project/guidellm/issues/138[it is a work in progress].
+Take note of your P95 TTFT values, in particular. Some of them are quite high when highly concurrent, as we overloaded this vLLM instance.
+In order to better understand our options for our expected use cases at ParasolCloud, let's use a custom benchmark.
 
-**Solution**: Verify the vLLM endpoint is accessible:
-[.console-input]
-[source,bash]
-----
-# Test the endpoint
-INFERENCE_URL=$(oc get inferenceservice llama-vllm-single -o jsonpath='{.status.url}')
-curl -k ${INFERENCE_URL}/v1/models
-----
-
-**Issue**: "processor not found" error
-
-**Solution**: Ensure you have access to the tokenizer:
-[.console-input]
-[source,bash]
-----
-# If using a gated model, set HF_TOKEN
-export HF_TOKEN=your_token_here
-----
+TODO: insert first pass of custom benchmark here
 
 == Module 2 summary
 
 **What you accomplished:**
+
 * Deployed Llama 3.1 8B Instruct using KServe and vLLM on single GPU
 * Configured Grafana monitoring for vLLM metrics
-* Ran GuideLLM benchmark to establish baseline performance
-* Recorded your baseline P95 TTFT under load
+* Ran GuideLLM benchmark to establish baseline performance, confirming fast and efficient inference with Red Hat AI Inference Server
+* Ran a custom benchmarking suite, designed to better model ParasolCloud's expected use cases, to measure P95 TTFT under load
 
 **Key takeaways:**
+
 * Single GPU has limited capacity before latency degrades
 * Tail latency (P95/P99) degrades significantly when approaching saturation
 * vLLM metrics in Grafana provide real-time performance visibility
 * Your most frustrated users (P95/P99) experience significantly higher latency than median
 
 **ParasolCloud's baseline:**
+
 * Record your baseline P95 TTFT - you'll compare this in later modules
 * Key question: Will adding more GPUs reduce tail latency?
 
 **Next steps:**
+
 Module 3 will scale your vLLM deployment to 4 GPUs using naive horizontal scaling. You'll discover a critical insight: **more GPUs increase capacity but don't fix tail latency**.
