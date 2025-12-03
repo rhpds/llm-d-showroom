@@ -437,7 +437,8 @@ Login with your OpenShift credentials.
 
 == Exercise 3: Run GuideLLM benchmarks
 
-Now establish your performance baseline by running comprehensive benchmarks with GuideLLM from the terminal.
+Now establish your performance baseline by running comprehensive benchmarks with GuideLLM.
+We'll be using a Job on OpenShift to make sure that our containerized GuideLLM implementation is consistent.
 
 === Get the inference URL
 
@@ -462,18 +463,61 @@ Run a benchmark to establish your single-GPU baseline performance:
 [source,bash]
 ----
 # Run baseline benchmark with sweep profile
-guidellm benchmark \
-  --target "${INFERENCE_URL}" \
-  --profile sweep \
-  --max-seconds 60 \
-  --processor meta-llama/Meta-Llama-3.1-8B-Instruct \
-  --data "prompt_tokens=256,output_tokens=128"
+cat << EOF | oc apply -f-
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: guidellm-vllm-single-sweep-results
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  volumeMode: Filesystem
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: guidellm-vllm-single-sweep
+spec:
+  backoffLimit: 4
+  template:
+    spec:
+      serviceAccountName: default
+      restartPolicy: Never
+      containers:
+        - name: guidellm
+          image: ghcr.io/vllm-project/guidellm:v0.4.0
+          imagePullPolicy: IfNotPresent
+          command:
+            - /opt/app-root/bin/guidellm
+          args:
+            - benchmark
+            - run
+            - --target=${INFERENCE_URL}
+            - --profile=sweep
+            - --max-seconds=60
+            - --processor=RedHatAI/Meta-Llama-3.1-8B-Instruct-FP8-dynamic
+            - --data=prompt_tokens=256,output_tokens=128
+          volumeMounts:
+            - name: home
+              mountPath: /home/guidellm
+            - name: results
+              mountPath: /results
+      volumes:
+        - name: home
+          emptyDir: {}
+        - name: results
+          persistentVolumeClaim:
+            claimName: guidellm-vllm-single-sweep-results
+EOF
 ----
 
 **What this benchmark does**:
-* `--profile sweep`: Runs multiple load levels to find saturation point
-* `--max-seconds 60`: Runs for 60 seconds per load level
-* `--processor`: Specifies the tokenizer for accurate token counting
+* `--profile=sweep`: Runs multiple load levels to find saturation point
+* `--max-seconds=60`: Runs for 60 seconds per load level
+* `--processor`: Specifies the HuggingFace repository with the tokenizer configuration for accurate token counting
 * `--data`: Generates synthetic prompts with 256 input tokens and 128 output tokens
 
 === Monitor in Grafana
