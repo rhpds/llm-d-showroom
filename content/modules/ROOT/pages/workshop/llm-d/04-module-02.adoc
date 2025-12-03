@@ -317,7 +317,10 @@ So, our single vLLM instance is up and running our Llama model successfully!
 
 == Exercise 2: Configure Grafana monitoring
 
-To understand vLLM performance, you need metrics visualization. You'll configure a Grafana dashboard to track vLLM inference metrics.
+To understand vLLM performance, you need metrics visualization.
+We'll start by looking over the vLLM metrics themselves, then move on to a more visual representation.
+There is a pre-deployed Grafana dashboard that will help with this lab.
+Let's make sure it's up and recording data from our model server instance.
 
 === Expose vLLM metrics endpoint
 
@@ -332,16 +335,32 @@ echo $POD_NAME
 
 # Port-forward to test metrics endpoint
 oc port-forward ${POD_NAME} 8080:8080 &
+# You may want to press Enter an extra time or two here
+----
+
+Example output:
+
+[.console-output]
+[source,bash]
+----
+pod/llama-vllm-single-predictor-7b979bbf9c-2ttdv
+[1] 52333
+[lab-user@bastion ~]$ Forwarding from 127.0.0.1:8080 -> 8080
+Forwarding from [::1]:8080 -> 8080
+
+[lab-user@bastion ~]$
+[lab-user@bastion ~]$
 ----
 
 [.console-input]
 [source,bash]
 ----
 # Fetch metrics
-curl http://localhost:8080/metrics | grep vllm | less
+curl http://localhost:8080/metrics | grep vllm | head -40
 ----
 
 You should see a lot of vLLM-specific metrics, including:
+
 * `vllm:num_requests_running`
 * `vllm:num_requests_waiting`
 * `vllm:kv_cache_usage_perc`
@@ -354,9 +373,17 @@ You should see a lot of vLLM-specific metrics, including:
 pkill -f "port-forward"
 ----
 
+Expected output:
+
+[.console-output]
+[source,bash]
+----
+[1]+  Terminated              oc port-forward ${POD_NAME} 8080:8080
+----
+
 === Create ServiceMonitor for Prometheus
 
-To collect vLLM metrics in Prometheus, create a ServiceMonitor:
+To collect vLLM metrics in Prometheus from OpenShift User Workload Monitoring (preconfigured on your cluster), create a ServiceMonitor:
 
 [.console-input]
 [source,bash]
@@ -377,6 +404,20 @@ spec:
 EOF
 ----
 
+Expected output:
+
+[.console-output]
+[source,bash]
+----
+servicemonitor.monitoring.coreos.com/vllm-metrics created
+----
+
+[NOTE]
+====
+There was a ServiceMonitor created by KServe already, but because we're using a Custom ServingRuntime, it isn't wired up correctly by default.
+You can run `oc get servicemonitor llama-vllm-single-metrics -oyaml` to see it and piece together what changes we'd have to make to use it, if you like.
+====
+
 === Access Grafana dashboard
 
 Your workshop environment should have a pre-configured Grafana instance. Access it:
@@ -385,30 +426,14 @@ Your workshop environment should have a pre-configured Grafana instance. Access 
 [source,bash]
 ----
 # Get Grafana route
-oc get route grafana-route -n grafana
+route=$(oc get route grafana-route -n grafana -ojsonpath='{.status.ingress[0].host}')
+# Output the dashboard link
+echo "https://$route/d/llm-performance/llm-d-performance-dashboard"
 
 # Open in browser (URL from command above)
 ----
 
 Login with your OpenShift credentials.
-
-=== Import vLLM dashboard
-
-Import the vLLM monitoring dashboard:
-
-1. Navigate to **Dashboards → Import**
-2. Upload the provided `vllm-dashboard.json` or paste the JSON content
-3. Select your Prometheus data source
-4. Click **Import**
-
-Key panels to monitor:
-* **Requests per second**: Current throughput
-* **Active requests**: Concurrent requests being processed
-* **GPU cache usage**: Memory utilization
-* **Generation throughput**: Tokens generated per second
-* **Request latency**: P50, P95, P99 latencies
-
-NOTE: Dashboard files should be provided in workshop materials. If not available, create custom panels for the metrics listed above.
 
 == Exercise 3: Run GuideLLM benchmarks
 
@@ -416,7 +441,7 @@ Now establish your performance baseline by running comprehensive benchmarks with
 
 === Get the inference URL
 
-First, retrieve your InferenceService URL:
+First, make sure you have saved your InferenceService URL and that it's still working as expected:
 
 [.console-input]
 [source,bash]
@@ -426,7 +451,7 @@ INFERENCE_URL=$(oc get inferenceservice llama-vllm-single -o jsonpath='{.status.
 echo "INFERENCE_URL: ${INFERENCE_URL}"
 
 # Verify the endpoint is accessible
-curl -k ${INFERENCE_URL}/v1/models
+curl ${INFERENCE_URL}/v1/models | jq .
 ----
 
 === Run baseline benchmark
