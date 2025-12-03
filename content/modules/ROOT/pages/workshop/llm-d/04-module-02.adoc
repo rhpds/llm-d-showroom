@@ -23,303 +23,413 @@ ParasolCloud needs a baseline measurement of single-GPU inference performance. Y
 
 First, confirm your OpenShift AI environment is ready:
 
+[.console-input]
 [source,bash]
 ----
 # Verify you're logged into OpenShift
 oc whoami
 
-# Check your assigned namespace
-oc project
+# Select your lab namespace
+oc project llm-d-project
 
-# Verify GPU nodes are available
+# Verify GPU node is available
 oc get nodes -l nvidia.com/gpu.present=true
-
-# Check GPU quota in your namespace
-oc get resourcequota
 ----
 
-Expected output: Your username, namespace, GPU nodes listed, and GPU quota showing available resources.
+Example output:
+
+[.console-output]
+[source,bash]
+----
+system:admin
+Now using project "llm-d-project" on server "https://api.cluster-fnj7b.fnj7b.sandbox5571.opentlc.com:6443".
+NAME                                        STATUS   ROLES                         AGE   VERSION
+ip-10-0-47-154.us-east-2.compute.internal   Ready    control-plane,master,worker   24h   v1.33.5
+----
 
 === Create the vLLM ServingRuntime
 
-KServe uses ServingRuntimes to define how models are served. You'll create a vLLM ServingRuntime configuration.
+KServe uses ServingRuntimes to define how models are served. You'll create a vLLM-based ServingRuntime configuration.
 
-Create a file named `vllm-runtime.yaml`:
+Create the ServingRuntime for Red Hat AI Inference Server.
 
+[.console-input]
 [source,bash]
 ----
-cat > vllm-runtime.yaml << 'EOF'
+cat << 'EOF' | oc apply -f-
 apiVersion: serving.kserve.io/v1alpha1
 kind: ServingRuntime
 metadata:
-  name: vllm-runtime
+  annotations:
+    opendatahub.io/apiProtocol: REST
+    opendatahub.io/recommended-accelerators: '["nvidia.com/gpu"]'
+    opendatahub.io/runtime-version: v3.2.4
+    opendatahub.io/serving-runtime-scope: global
+    openshift.io/display-name: RHAIIS (vLLM) NVIDIA GPU ServingRuntime for KServe
+    openshift.io/template-display-name: RHAIIS (vLLM) NVIDIA GPU ServingRuntime for KServe
+    opendatahub.io/template-name: rhaiis-cuda-template
+  labels:
+    opendatahub.io/dashboard: "true"
+  name: rhaiis-cuda
 spec:
   annotations:
-    opendatahub.io/kserve-runtime: vllm
     prometheus.io/path: /metrics
-    prometheus.io/port: '8080'
+    prometheus.io/port: "8080"
   containers:
-    - args:
-        - '--port=8080'
-        - '--model=/mnt/models'
-        - '--served-model-name={{.Name}}'
-        - '--max-model-len=8000'
-      command:
-        - python
-        - '-m'
-        - vllm.entrypoints.openai.api_server
-      env:
-        - name: HF_HOME
-          value: /tmp/hf_home
-      image: 'registry.redhat.io/rhaiis/vllm-cuda-rhel9@sha256:ad756c01ec99a99cc7d93401c41b8d92ca96fb1ab7c5262919d818f2be4f3768'
-      name: kserve-container
-      ports:
-        - containerPort: 8080
-          protocol: TCP
+  - args:
+    - --port=8080
+    - --model=/mnt/models
+    - --served-model-name={{.Name}}
+    command:
+    - python
+    - -m
+    - vllm.entrypoints.openai.api_server
+    env:
+    - name: HF_HOME
+      value: /tmp/hf_home
+    - name: HF_HUB_OFFLINE
+      value: "1"
+    - name: VLLM_NO_USAGE_STATS
+      value: "1"
+    image: registry.redhat.io/rhaiis/vllm-cuda-rhel9:3.2.4
+    name: kserve-container
+    ports:
+    - containerPort: 8080
+      protocol: TCP
   multiModel: false
   supportedModelFormats:
-    - autoSelect: true
-      name: vLLM
+  - autoSelect: true
+    name: vLLM
 EOF
 ----
 
-Apply the ServingRuntime:
+Expected output:
 
+[.console-output]
 [source,bash]
 ----
-oc apply -f vllm-runtime.yaml
-----
-
-Verify the ServingRuntime was created:
-
-[source,bash]
-----
-oc get servingruntimes
+servingruntime.serving.kserve.io/rhaiis-cuda created
 ----
 
 === Create the InferenceService
 
 Now deploy the Llama 3.1 8B model using the vLLM runtime.
 
-[source,bash]
-----
-# Create secret with your HuggingFace token
-oc create secret generic hf-token \
-  --from-literal=HF_TOKEN=your_token_here
-----
-
 Create the InferenceService configuration:
 
+[.console-input]
 [source,bash]
 ----
-cat > llama-vllm-single.yaml << 'EOF'
+cat << 'EOF' | oc apply -f-
 apiVersion: serving.kserve.io/v1beta1
 kind: InferenceService
 metadata:
   name: llama-vllm-single
   annotations:
+    openshift.io/display-name: Llama 3.1 8B FP8 Single
+    security.opendatahub.io/enable-auth: "false"
     serving.kserve.io/deploymentMode: RawDeployment
+    opendatahub.io/hardware-profile-name: accelerated-profile
+    opendatahub.io/hardware-profile-namespace: redhat-ods-applications
+  labels:
+    networking.kserve.io/visibility: exposed
 spec:
   predictor:
     automountServiceAccountToken: false
-    imagePullSecrets:
-      - name: secret-pafskz
     maxReplicas: 1
     minReplicas: 1
+    deploymentStrategy:
+      type: Recreate
     model:
       modelFormat:
         name: vLLM
       name: ''
       resources:
         limits:
-          cpu: '2'
-          memory: 4Gi
+          cpu: '8'
+          memory: 16Gi
           nvidia.com/gpu: '1'
         requests:
           cpu: '2'
-          memory: 4Gi
+          memory: 8Gi
           nvidia.com/gpu: '1'
-      runtime: llama
+      runtime: rhaiis-cuda
       storageUri: 'oci://registry.redhat.io/rhelai1/modelcar-llama-3-1-8b-instruct-fp8-dynamic:1.5'
+      args:
+        - --max-model-len=65536
 EOF
 ----
 
-Apply the InferenceService:
+Expected output:
 
+[.console-output]
 [source,bash]
 ----
-oc apply -f llama-vllm-single.yaml
+inferenceservice.serving.kserve.io/llama-vllm-single created
 ----
 
 === Monitor deployment progress
 
 Watch the InferenceService status:
 
+[.console-input]
 [source,bash]
 ----
-# Watch InferenceService status
+# Watch InferenceService status, use Ctrl+C to cancel when it shows ready
 oc get inferenceservice llama-vllm-single -w
-
-# In another terminal, watch pod creation
-oc get pods -l serving.kserve.io/inferenceservice=llama-vllm-single -w
 ----
 
-The deployment will go through these states:
-1. **Unknown**: Initial state
-2. **InProgress**: Pod creating, model downloading
-3. **Ready**: Model loaded and serving
+Example output:
 
-This can take 5-10 minutes depending on model download speed.
-
-Check logs if there are issues:
-
+[.console-output]
 [source,bash]
 ----
-# View container logs
-oc logs -l serving.kserve.io/inferenceservice=llama-vllm-single -f
+NAME                URL                                                                                        READY   PREV   LATEST   PREVROLLEDOUTREVISION   LATESTREADYREVISION   AGE
+llama-vllm-single   https://llama-vllm-single-llm-d-project.apps.cluster-fnj7b.fnj7b.sandbox5571.opentlc.com   False                                                                 4s
+llama-vllm-single   https://llama-vllm-single-llm-d-project.apps.cluster-fnj7b.fnj7b.sandbox5571.opentlc.com   True                                                                  98s
 ----
+
+The deployment will progress to `READY` being `True` after the model is loaded. You can press `Ctrl+C` to cancel once it does.
+The model and serving runtime should already have been downloaded to your node, speeding this up.
 
 === Test the deployment
 
-Once the InferenceService shows `Ready`, test it:
+It's time to make sure your model behaves as expected. First, recover the URL:
 
+[.console-input]
 [source,bash]
 ----
 # Get the inference URL
-INFERENCE_URL=$(oc get inferenceservice llama-vllm-single -o jsonpath='{.status.url}'):8080
+INFERENCE_URL=$(oc get inferenceservice llama-vllm-single -o jsonpath='{.status.url}')
 echo $INFERENCE_URL
+----
 
-# Test with curl
-curl -k ${INFERENCE_URL}/v1/models
+Example output:
+[.console-output]
+[source,bash]
+----
+https://llama-vllm-single-llm-d-project.apps.cluster-fnj7b.fnj7b.sandbox5571.opentlc.com
+----
 
-# Send a test request
-curl -k ${INFERENCE_URL}/v1/completions \
+Then, make sure the models endpoint returns the model name we expect:
+
+[.console-input]
+[source,bash]
+----
+# Check the list of models to confirm the model name is llama-vllm-single, matching the InferenceService
+curl ${INFERENCE_URL}/v1/models | jq .
+----
+
+Example output:
+
+[.console-output]
+[source,bash]
+----
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+100   479  100   479    0     0  16517      0 --:--:-- --:--:-- --:--:-- 17740
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "llama-vllm-single",
+      "object": "model",
+      "created": 1764775080,
+      "owned_by": "vllm",
+      "root": "/mnt/models",
+      "parent": null,
+      "max_model_len": 65536,
+      "permission": [
+        {
+          "id": "modelperm-5c81cbc429a64795876e782e246ee818",
+          "object": "model_permission",
+          "created": 1764775080,
+          "allow_create_engine": false,
+          "allow_sampling": true,
+          "allow_logprobs": true,
+          "allow_search_indices": false,
+          "allow_view": true,
+          "allow_fine_tuning": false,
+          "organization": "*",
+          "group": null,
+          "is_blocking": false
+        }
+      ]
+    }
+  ]
+}
+----
+
+Now, make sure the model is able to perform inference at one of the OpenAI-compatible endpoints:
+
+[.console-input]
+[source,bash]
+----
+# Send a test request to the model
+curl ${INFERENCE_URL}/v1/completions \
   -H "Content-Type: application/json" \
   -d '{
     "model": "llama-vllm-single",
     "prompt": "San Francisco is a",
     "max_tokens": 50,
     "temperature": 0.7
-  }'
+  }' | jq .
 ----
 
-Expected output: JSON response with generated text completion.
+Example output:
 
-=== Troubleshooting
-
-**Issue**: InferenceService stuck in "Unknown" or "InProgress"
-**Solution**:
+[.console-output]
 [source,bash]
 ----
-# Check pod status
-oc get pods -l serving.kserve.io/inferenceservice=llama-vllm-single
-
-# Check events
-oc get events --sort-by='.lastTimestamp' | grep llama-vllm-single
-
-# Common issues:
-# - Image pull: Check image name and pull secrets
-# - GPU quota: Verify GPU resources available
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+100   818  100   698  100   120    388     66  0:00:01  0:00:01 --:--:--   455
+{
+  "id": "cmpl-3e58a92a36bd4336b767a26bb089d0df",
+  "object": "text_completion",
+  "created": 1764775084,
+  "model": "llama-vllm-single",
+  "choices": [
+    {
+      "index": 0,
+      "text": " top tourist destination in the United States, attracting millions of visitors each year. From its iconic Golden Gate Bridge to its vibrant neighborhoods like Haight-Ashbury and Fisherman's Wharf, there's no shortage of things to see and do in this",
+      "logprobs": null,
+      "finish_reason": "length",
+      "stop_reason": null,
+      "token_ids": null,
+      "prompt_logprobs": null,
+      "prompt_token_ids": null
+    }
+  ],
+  "service_tier": null,
+  "system_fingerprint": null,
+  "usage": {
+    "prompt_tokens": 5,
+    "total_tokens": 55,
+    "completion_tokens": 50,
+    "prompt_tokens_details": null
+  },
+  "kv_transfer_params": null
+}
 ----
+
+So, our single vLLM instance is up and running our Llama model successfully!
 
 == Exercise 2: Configure Grafana monitoring
 
-To understand vLLM performance, you need metrics visualization. You'll configure a Grafana dashboard to track vLLM inference metrics.
+To understand vLLM performance, you need metrics visualization.
+We'll start by looking over the vLLM metrics themselves, then move on to a more visual representation.
+There is a pre-deployed Grafana dashboard that will help with this lab.
+Let's make sure it's up and recording data from our model server instance.
 
 === Expose vLLM metrics endpoint
 
 vLLM exposes Prometheus metrics on its metrics port. Verify the service is exposing metrics:
 
+[.console-input]
 [source,bash]
 ----
-# Find the vLLM service
-oc get svc -l serving.kserve.io/inferenceservice=llama-vllm-single
+# Find the vLLM pod
+POD_NAME=$(oc get pod -l serving.kserve.io/inferenceservice=llama-vllm-single -oname)
+echo $POD_NAME
 
 # Port-forward to test metrics endpoint
-oc port-forward svc/llama-vllm-single-predictor 8080:8080 &
+oc port-forward ${POD_NAME} 8080:8080 &
+# You may want to press Enter an extra time or two here
+----
 
-# Fetch metrics (in another terminal or after port-forward runs)
-curl http://localhost:8080/metrics | grep vllm
+Example output:
 
-# Stop port-forward
+[.console-output]
+[source,bash]
+----
+pod/llama-vllm-single-predictor-7b979bbf9c-2ttdv
+[1] 52333
+[lab-user@bastion ~]$ Forwarding from 127.0.0.1:8080 -> 8080
+Forwarding from [::1]:8080 -> 8080
+
+[lab-user@bastion ~]$
+[lab-user@bastion ~]$
+----
+
+[.console-input]
+[source,bash]
+----
+# Fetch metrics
+curl http://localhost:8080/metrics | grep vllm | head -40
+----
+
+You should see a lot of vLLM-specific metrics, including:
+
+* `vllm:num_requests_running`
+* `vllm:num_requests_waiting`
+* `vllm:kv_cache_usage_perc`
+* `vllm:generation_tokens_total`
+
+[.console-input]
+[source,bash]
+----
+# Stop port-forward when ready
 pkill -f "port-forward"
 ----
 
-You should see vLLM-specific metrics like:
-* `vllm:num_requests_running`
-* `vllm:num_requests_waiting`
-* `vllm:gpu_cache_usage_perc`
-* `vllm:avg_generation_throughput_toks_per_s`
+Expected output:
 
-=== Create ServiceMonitor for Prometheus
-
-To collect vLLM metrics in Prometheus, create a ServiceMonitor:
-
+[.console-output]
 [source,bash]
 ----
-cat > vllm-servicemonitor.yaml << 'EOF'
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  name: vllm-metrics
-spec:
-  selector:
-    matchLabels:
-      serving.kserve.io/inferenceservice: llama-vllm-single
-  endpoints:
-    - port: http
-      path: /metrics
-      interval: 30s
-EOF
+[1]+  Terminated              oc port-forward ${POD_NAME} 8080:8080
 ----
 
-Apply the ServiceMonitor:
+=== Verify ServiceMonitor configuration
 
+To collect vLLM metrics in Prometheus, we need to enable OpenShift User Workload Monitoring and create a ServiceMonitor.
+Your lab clusters have already had User Workload Monitoring enabled
+(see https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/monitoring/configuring-user-workload-monitoring[the OpenShift documentation] on the topic),
+and OpenShift AI creates the ServiceMonitor for KServe InferenceServices for you. Ensure you see it in your environment:
+
+[.console-input]
 [source,bash]
 ----
-oc apply -f vllm-servicemonitor.yaml
+oc get servicemonitor llama-vllm-single-metrics
+----
+
+Example output:
+
+[.console-output]
+[source,bash]
+----
+NAME                        AGE
+llama-vllm-single-metrics   8m
 ----
 
 === Access Grafana dashboard
 
 Your workshop environment should have a pre-configured Grafana instance. Access it:
 
+[.console-input]
 [source,bash]
 ----
 # Get Grafana route
-oc get route grafana -n openshift-monitoring
+route=$(oc get route grafana-route -n grafana -ojsonpath='{.status.ingress[0].host}')
+# Output the dashboard link
+echo "https://$route/d/llm-performance/llm-d-performance-dashboard"
 
 # Open in browser (URL from command above)
 ----
 
 Login with your OpenShift credentials.
 
-=== Import vLLM dashboard
-
-Import the vLLM monitoring dashboard:
-
-1. Navigate to **Dashboards → Import**
-2. Upload the provided `vllm-dashboard.json` or paste the JSON content
-3. Select your Prometheus data source
-4. Click **Import**
-
-Key panels to monitor:
-* **Requests per second**: Current throughput
-* **Active requests**: Concurrent requests being processed
-* **GPU cache usage**: Memory utilization
-* **Generation throughput**: Tokens generated per second
-* **Request latency**: P50, P95, P99 latencies
-
-NOTE: Dashboard files should be provided in workshop materials. If not available, create custom panels for the metrics listed above.
-
 == Exercise 3: Run GuideLLM benchmarks
 
-Now establish your performance baseline by running comprehensive benchmarks with GuideLLM from the terminal.
+Now establish your performance baseline by running comprehensive benchmarks with GuideLLM.
+We'll be using a Job on OpenShift to make sure that our containerized GuideLLM implementation is consistent.
 
 === Get the inference URL
 
-First, retrieve your InferenceService URL:
+First, make sure you have saved your InferenceService URL and that it's still working as expected:
 
+[.console-input]
 [source,bash]
 ----
 # Get the inference URL
@@ -327,28 +437,120 @@ INFERENCE_URL=$(oc get inferenceservice llama-vllm-single -o jsonpath='{.status.
 echo "INFERENCE_URL: ${INFERENCE_URL}"
 
 # Verify the endpoint is accessible
-curl -k ${INFERENCE_URL}/v1/models
+curl ${INFERENCE_URL}/v1/models | jq .
 ----
 
 === Run baseline benchmark
 
 Run a benchmark to establish your single-GPU baseline performance:
 
+[.console-input]
 [source,bash]
 ----
 # Run baseline benchmark with sweep profile
-guidellm benchmark \
-  --target "${INFERENCE_URL}" \
-  --profile sweep \
-  --max-seconds 60 \
-  --processor meta-llama/Meta-Llama-3.1-8B-Instruct \
-  --data "prompt_tokens=256,output_tokens=128"
+cat << EOF | oc apply -f-
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: guidellm-vllm-single-sweep-results
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  volumeMode: Filesystem
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: guidellm-vllm-single-sweep
+spec:
+  backoffLimit: 4
+  template:
+    spec:
+      serviceAccountName: default
+      restartPolicy: Never
+      containers:
+        - name: guidellm
+          image: ghcr.io/vllm-project/guidellm:v0.4.0
+          imagePullPolicy: IfNotPresent
+          command:
+            - /opt/app-root/bin/guidellm
+          args:
+            - benchmark
+            - run
+            - --target=${INFERENCE_URL}
+            - --profile=sweep
+            - --max-seconds=60
+            - --processor=RedHatAI/Meta-Llama-3.1-8B-Instruct-FP8-dynamic
+            - --data=prompt_tokens=256,output_tokens=128
+          volumeMounts:
+            - name: home
+              mountPath: /home/guidellm
+            - name: results
+              mountPath: /results
+      volumes:
+        - name: home
+          emptyDir: {}
+        - name: results
+          persistentVolumeClaim:
+            claimName: guidellm-vllm-single-sweep-results
+EOF
+
+oc logs -f job/guidellm-vllm-single-sweep
+----
+
+Example output (to start):
+
+[.console-output]
+[source,bash]
+----
+✔ OpenAIHTTPBackend backend validated with model llama-vllm-single
+  {'target':
+  'https://llama-vllm-single-llm-d-project.apps.cluster-fnj7b.fnj7b.sandbox5571.
+  opentlc.com', 'model': None, 'timeout': 60.0, 'http2': True,
+  'follow_redirects': True, 'verify': False, 'openai_paths': {'health':
+  'health', 'models': 'v1/models', 'text_completions': 'v1/completions',
+  'chat_completions': 'v1/chat/completions', 'audio_transcriptions':
+  'v1/audio/transcriptions', 'audio_translations': 'v1/audio/translations'},
+  'validate_backend': {'method': 'GET', 'url':
+  'https://llama-vllm-single-llm-d-project.apps.cluster-fnj7b.fnj7b.sandbox5571.
+  opentlc.com/health'}}
+✔ Processor resolved
+  Using processor 'RedHatAI/Meta-Llama-3.1-8B-Instruct-FP8-dynamic'
+✔ Request loader initialized with inf unique requests
+  {'data': "['prompt_tokens=256,output_tokens=128']", 'data_args': '[]',
+  'data_samples': -1, 'preprocessors': ['GenerativeColumnMapper',
+  'GenerativeChatCompletionsRequestFormatter'], 'collator':
+  'GenerativeRequestCollator', 'sampler': 'None', 'num_workers': 1,
+  'random_seed': 42}
+✔ Resolved transient phase configurations
+  Warmup: percent=None value=None mode='prefer_duration'
+  Cooldown: percent=None value=None mode='prefer_duration'
+  Rampup (Throughput/Concurrent): 0.0
+✔ SweepProfile profile resolved
+  {'str': "type_='sweep' completed_strategies=[] constraints={'max_seconds':
+  60.0} rampup_duration=0.0 sweep_size=10 strategy_type='constant'
+  max_concurrency=None random_seed=42 synchronous_rate=-1.0 throughput_rate=-1.0
+  async_rates=[] measured_rates=[] strategy_types=['synchronous', 'throughput',
+  'constant', 'constant', 'constant', 'constant', 'constant', 'constant',
+  'constant', 'constant']", 'type': 'SweepProfile', 'class': 'SweepProfile',
+  'module': 'guidellm.benchmark.profiles', 'attributes': {'type_': 'sweep',
+  'completed_strategies': [], 'constraints': {'max_seconds': 60.0},
+  'rampup_duration': 0.0, 'sweep_size': 10, 'strategy_type': 'constant',
+  'max_concurrency': 'None', 'random_seed': 42, 'synchronous_rate': -1.0,
+  'throughput_rate': -1.0, 'async_rates': [], 'measured_rates': []}}
+✔ Output formats resolved
+  {'json': "output_path=PosixPath('/results/benchmarks.json')"}
+✔ Setup complete, starting benchmarks...
 ----
 
 **What this benchmark does**:
-* `--profile sweep`: Runs multiple load levels to find saturation point
-* `--max-seconds 60`: Runs for 60 seconds per load level
-* `--processor`: Specifies the tokenizer for accurate token counting
+
+* `--profile=sweep`: Runs multiple load levels to find saturation point
+* `--max-seconds=60`: Runs for 60 seconds per load level
+* `--processor`: Specifies the HuggingFace repository with the tokenizer configuration for accurate token counting
 * `--data`: Generates synthetic prompts with 256 input tokens and 128 output tokens
 
 === Monitor in Grafana
@@ -357,59 +559,58 @@ While the benchmark runs:
 
 1. Open your vLLM Grafana dashboard
 2. Watch metrics in real-time:
-   * Requests per second climbing to saturation
-   * GPU cache usage increasing
-   * Active requests matching concurrency settings
-3. Note the P95 TTFT as load increases
+   * Request Throughput climbing to saturation
+   * GPU Cache usage increasing sharply
+   * The request queue will grow as the sweep ramps up
+3. Note the KV cache hit rates remain relatively low, probably around 11%
+   * This is because the benchmark we are using is synthetically generating random text for the prompts, and so most of the requests are not taking advantage of the amount of cache we have on this instance.
 
 === Analyze results
 
-GuideLLM will output performance metrics including:
+[NOTE]
+====
+GuideLLM will take about ten minutes to complete the full benchmark suite.
+The terminal will hang while this happens.
+You may want to press `Enter` occasionally to prevent the Showroom environment from timing out.
+====
+
+When complete, GuideLLM will output performance metrics including:
 
 * **Throughput**: Requests per second at various load levels
 * **TTFT (Time to First Token)**: P50, P95, P99 latencies
 * **ITL (Inter-Token Latency)**: Token generation speed
 
-Record your P95 TTFT values - you'll compare them against scaled deployments in Module 3 and llm-d in Module 4.
+An example would look like this:
 
-=== Troubleshooting
+image::guidellm-single.png[]
 
-**Issue**: GuideLLM benchmarks fail with connection errors
+As of the time of writing, GuideLLM doesn't have good support for multi-turn benchmarks, but https://github.com/vllm-project/guidellm/issues/138[it is a work in progress].
+Take note of your P95 TTFT values, in particular. Some of them are quite high when highly concurrent, as we overloaded this vLLM instance.
+In order to better understand our options for our expected use cases at ParasolCloud, let's use a custom benchmark.
 
-**Solution**: Verify the vLLM endpoint is accessible:
-[source,bash]
-----
-# Test the endpoint
-INFERENCE_URL=$(oc get inferenceservice llama-vllm-single -o jsonpath='{.status.url}')
-curl -k ${INFERENCE_URL}/v1/models
-----
-
-**Issue**: "processor not found" error
-
-**Solution**: Ensure you have access to the tokenizer:
-[source,bash]
-----
-# If using a gated model, set HF_TOKEN
-export HF_TOKEN=your_token_here
-----
+TODO: insert first pass of custom benchmark here
 
 == Module 2 summary
 
 **What you accomplished:**
+
 * Deployed Llama 3.1 8B Instruct using KServe and vLLM on single GPU
 * Configured Grafana monitoring for vLLM metrics
-* Ran GuideLLM benchmark to establish baseline performance
-* Recorded your baseline P95 TTFT under load
+* Ran GuideLLM benchmark to establish baseline performance, confirming fast and efficient inference with Red Hat AI Inference Server
+* Ran a custom benchmarking suite, designed to better model ParasolCloud's expected use cases, to measure P95 TTFT under load
 
 **Key takeaways:**
+
 * Single GPU has limited capacity before latency degrades
 * Tail latency (P95/P99) degrades significantly when approaching saturation
 * vLLM metrics in Grafana provide real-time performance visibility
 * Your most frustrated users (P95/P99) experience significantly higher latency than median
 
 **ParasolCloud's baseline:**
+
 * Record your baseline P95 TTFT - you'll compare this in later modules
 * Key question: Will adding more GPUs reduce tail latency?
 
 **Next steps:**
+
 Module 3 will scale your vLLM deployment to 4 GPUs using naive horizontal scaling. You'll discover a critical insight: **more GPUs increase capacity but don't fix tail latency**.
