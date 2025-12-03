@@ -24,7 +24,7 @@ ParasolCloud needs a baseline measurement of single-GPU inference performance. Y
 First, confirm your OpenShift AI environment is ready:
 
 [.console-input]
-[source,bash,role=execute]
+[source,bash]
 ----
 # Verify you're logged into OpenShift
 oc whoami
