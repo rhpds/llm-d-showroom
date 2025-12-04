@@ -3,16 +3,20 @@
 :toc: macro
 :toclevels: 2
 
-You've measured your single-GPU tail latency baseline: P95 TTFT reaches 800-1200ms under load. ParasolCloud's customers are frustrated. The obvious solution: add more GPUs to reduce queuing.
+You've measured your single-GPU tail latency baseline: P95 TTFT reaches almost 5000ms under load.
+ParasolCloud's customers are frustrated. The obvious solution: add more GPUs to reduce queuing.
 
-In this module, you'll scale to 4 GPUs using naive horizontal scaling, run the same benchmarks, and discover a critical insight: **more GPUs increase capacity but don't fix tail latency**.
+In this module, you'll scale to 4 GPUs using naive horizontal scaling,
+run the same benchmark, and discover a critical insight:
+**more GPUs increase capacity but they can't always fix tail latency**.
 
 == Learning objectives
+
 By the end of this module, you'll be able to:
 
 * Scale vLLM deployment to multiple GPUs with round-robin load balancing
-* Run benchmarks across both scenarios (single-turn and multi-turn)
-* Demonstrate that naive scaling doesn't reduce P95/P99 latency
+* Run our custom multi-turn benchmark again, using the dashboard controls to compare and contrast
+* Demonstrate that naive scaling doesn't reduce the worst of our latency
 * Understand why isolated KV caches cause persistent tail latency problems
 
 == Understanding naive scaling
@@ -20,103 +24,133 @@ By the end of this module, you'll be able to:
 Before deploying, understand what "naive scaling" means:
 
 **Naive horizontal scaling**:
+
 * Deploy multiple independent vLLM instances (1 per GPU)
 * Use round-robin or random load balancing
 * Each instance maintains its own isolated KV cache
 * No coordination between instances
 
 **What this achieves**:
+
 * ✅ Increases capacity (more requests per second)
-* ❌ **Does NOT reduce P95/P99 tail latency**
+* ❌ **Does NOT guarantee reduction in P95/P99 tail latency**
 
 **Why tail latency doesn't improve**:
+
 * **Cache misses persist**: Round-robin routing spreads requests randomly
-* **Single-turn shared prefixes**: Every instance recomputes the 300-token system prompt
 * **Multi-turn conversations**: Conversation turns land on different instances, causing cache misses
 * **No coordination**: Instances don't know what other instances have cached
 
-**The critical insight**: Adding GPUs gives you more *capacity* to handle traffic, but your most frustrated users (P95/P99) still experience high latency because cache misses cause redundant prefill computation.
+**The critical insight**: Adding GPUs gives you more *capacity* to handle traffic,
+but your most frustrated users (P95/P99) still experience high latency because cache
+misses cause redundant prefill computation, negating one of vLLM's greatest benefits.
 
 == Exercise 1: Deploy vLLM with 4 replicas
 
-You'll create a single InferenceService configured to scale to 4 replicas, with each replica running on its own GPU.
+You'll create a single InferenceService configured to scale to 4 replicas,
+with each replica running on its own GPU.
 
 === Clean up single-GPU deployment
 
 First, remove your single-GPU deployment:
 
+[.console-input]
 [source,bash]
 ----
 # Delete previous InferenceService
 oc delete inferenceservice llama-vllm-single
+----
 
-# Verify deletion
-oc get inferenceservice
+Expected output:
+
+[.console-output]
+[source,bash]
+----
+inferenceservice.serving.kserve.io "llama-vllm-single" deleted
 ----
 
 === Deploy scaled vLLM InferenceService
 
 Create an InferenceService with 4 replicas for naive horizontal scaling:
 
+[.console-input]
 [source,bash]
 ----
-cat > llama-vllm-scaled.yaml << 'EOF'
+cat << 'EOF' | oc apply -f-
 apiVersion: serving.kserve.io/v1beta1
 kind: InferenceService
 metadata:
   name: llama-vllm-scaled
   annotations:
+    openshift.io/display-name: Llama 3.1 8B FP8 Scaled
+    security.opendatahub.io/enable-auth: "false"
     serving.kserve.io/deploymentMode: RawDeployment
+    opendatahub.io/hardware-profile-name: accelerated-profile
+    opendatahub.io/hardware-profile-namespace: redhat-ods-applications
+  labels:
+    networking.kserve.io/visibility: exposed
 spec:
   predictor:
     automountServiceAccountToken: false
-    imagePullSecrets:
-      - name: secret-pafskz
     maxReplicas: 4
     minReplicas: 4
+    deploymentStrategy:
+      type: Recreate
     model:
       modelFormat:
         name: vLLM
       name: ''
       resources:
         limits:
-          cpu: '2'
-          memory: 4Gi
+          cpu: '8'
+          memory: 16Gi
           nvidia.com/gpu: '1'
         requests:
           cpu: '2'
-          memory: 4Gi
+          memory: 8Gi
           nvidia.com/gpu: '1'
-      runtime: llama
+      runtime: rhaiis-cuda
       storageUri: 'oci://registry.redhat.io/rhelai1/modelcar-llama-3-1-8b-instruct-fp8-dynamic:1.5'
+      args:
+        - --max-model-len=65536
 EOF
 ----
 
-IMPORTANT: If you need to authenticate to Hugging Face (for gated models), add the `HF_TOKEN` environment variable as shown in Module 2.
+Expected output:
 
-Apply the InferenceService:
-
+[.console-output]
 [source,bash]
 ----
-# Deploy the scaled InferenceService
-oc apply -f llama-vllm-scaled.yaml
-
-# Watch deployment progress
-watch oc get inferenceservice llama-vllm-scaled
+inferenceservice.serving.kserve.io/llama-vllm-scaled created
 ----
 
-Wait for the InferenceService to reach `Ready` state. This may take 10-15 minutes as all 4 replicas download and load the model.
+=== Monitor deployment progress
 
-Monitor progress:
+[NOTE]
+====
+As before, you can follow along in OpenShift AI's dashboard if you like.
+====
 
+Watch the InferenceService status:
+
+[.console-input]
 [source,bash]
 ----
-# Check all pods (should see 4 replicas)
-oc get pods -l serving.kserve.io/inferenceservice=llama-vllm-scaled -w
-
-# Check logs from all replicas
-oc logs -l serving.kserve.io/inferenceservice=llama-vllm-scaled --all-containers -f
+# Watch InferenceService status, use Ctrl+C to cancel when it shows ready
+oc get inferenceservice llama-vllm-scaled -w
 ----
+
+Example output:
+
+[.console-output]
+[source,bash]
+----
+
+----
+
+The deployment will progress to `READY` being `True` after the model is loaded. You can press `Ctrl+C` to cancel once it does.
+Again, the model and serving runtime should already have been downloaded to your node, so this won't take too long.
+The models are being loaded into VRAM, along with CUDA graphs and preallocating KV cache space.
 
 === Verify the deployment
 

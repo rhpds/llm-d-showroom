@@ -8,6 +8,7 @@ Now it's time to establish your performance baseline. Before evaluating llm-d's 
 In this module, you'll deploy Llama 3.1 8B with vLLM on a single GPU using KServe in OpenShift AI, configure monitoring, and run comprehensive benchmarks with GuideLLM.
 
 == Learning objectives
+
 By the end of this module, you'll be able to:
 
 * Deploy a generative AI model using KServe and vLLM ServingRuntime in OpenShift AI
@@ -169,6 +170,12 @@ inferenceservice.serving.kserve.io/llama-vllm-single created
 ----
 
 === Monitor deployment progress
+
+[NOTE]
+====
+If you want, you can view progress in the OpenShift AI dashboard.
+The deployments we're doing should reflect properly there, as if you had filled out the UI.
+====
 
 Watch the InferenceService status:
 
