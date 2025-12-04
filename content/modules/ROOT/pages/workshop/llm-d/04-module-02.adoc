@@ -498,6 +498,7 @@ spec:
             claimName: guidellm-vllm-single-sweep-results
 EOF
 
+oc wait --for=jsonpath='{.status.ready}'=1 job/guidellm-vllm-single-sweep
 oc logs -f job/guidellm-vllm-single-sweep
 ----
 
