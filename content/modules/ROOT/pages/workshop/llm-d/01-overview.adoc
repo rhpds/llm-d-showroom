@@ -3,34 +3,81 @@
 :toc-placement: preamble
 :icons: font
 
-== Your role and goal
+== Your role
 
-You're a Platform Engineer at ParasolCloud, and you've been assigned to evaluate distributed LLM inference solutions for a critical upcoming deployment.
+You're a **Platform Engineer at ParasolCloud**, a SaaS company providing AI-powered customer service solutions. You've been assigned to solve a critical performance challenge before a major client expansion.
 
-ParasolCloud needs to improve its AI-powered customer service platform's response times to handle a major client expansion. Your manager has explained: "We're getting complaints about slow responses during peak hours—our most frustrated customers are waiting too long. Our current single-instance vLLM deployment isn't delivering consistent performance. We need you to evaluate llm-d to see if it can reduce tail latency and give our worst-case users a better experience."
+== The business challenge
 
-**Your assignment**: Evaluate llm-d's cache-aware routing and demonstrate measurable tail latency (P95/P99) improvements over naive vLLM scaling for ParasolCloud's production AI platform.
+ParasolCloud is experiencing rapid growth, but there's a problem threatening customer satisfaction:
 
-**The objective**: Provide clear benchmarks showing P95 and P99 latency reductions that justify the architectural shift to llm-d-orchestrated distributed inference.
+**The situation:**
 
-**Current challenges** (operational pain points):
+* **Current deployment**: Single vLLM instance serving an AI customer service chatbot
+* **The problem**: Slow, unpredictable response times during peak hours—especially for 5-10% of users
+* **Business impact**: Customer complaints about "the bot takes forever to respond" are increasing
+* **Upcoming deadline**: Major client expansion launching in 90 days will 4x traffic
+* **Risk**: Current infrastructure can't scale without making the worst-case user experience even worse
 
-* **Unpredictable tail latency**: No intelligent request routing → Your most frustrated users (P95/P99) experience unacceptably slow responses during peak periods
-* **Prefill queuing bottleneck**: Large prompts cause head-of-line blocking → Some customers wait significantly longer than others for first response
-* **Multi-turn chat inefficiency**: Conversation follow-ups recompute entire context every time → Unnecessary delays for ongoing customer interactions
-* **Poor cache utilization**: Similar customer queries don't benefit from KV cache sharing → Redundant computation increases P95/P99 latency
-* **Naive scaling doesn't help tail latency**: Adding more isolated vLLM instances improves capacity but doesn't reduce worst-case response times
+**What your manager said:**
 
-**The opportunity**: llm-d technology can address these challenges through cache-aware routing and intelligent inference scheduling, and you've been selected to evaluate its feasibility for ParasolCloud's production deployment.
+"We're getting complaints about slow responses during peak hours—our most frustrated customers are waiting too long. Our current single-instance vLLM deployment isn't delivering consistent performance. We need you to evaluate llm-d to see if it can reduce tail latency and give our worst-case users a better experience."
 
-**Technical perspective**: "llm-d's Prefix Cache Aware Routing has proven benefits in distributed inference environments, but I need to validate how it performs with our specific workload patterns and infrastructure constraints. The key question is: can we dramatically reduce P95 and P99 latency to improve the experience for our most frustrated customers?"
+The executive team wants data: **Can we scale without making our slowest users even more frustrated?**
+
+== Your assignment
+
+Evaluate whether **llm-d** (an intelligent orchestration layer for distributed LLM inference) can solve ParasolCloud's tail latency problem.
+
+**Your specific tasks:**
+
+1. **Establish a baseline** - Measure current P95/P99 latency with single GPU vLLM
+2. **Test naive scaling** - Deploy 4 GPUs with round-robin load balancing and see if tail latency improves
+3. **Evaluate llm-d** - Deploy llm-d with cache-aware routing and measure P95/P99 improvements
+4. **Quantify customer impact** - Translate latency improvements into user experience gains
+5. **Build a recommendation** - Provide data-driven guidance on whether to adopt llm-d
+
+**Key question to answer**: Can llm-d deliver consistently low latency for all customers; especially the 5-10% currently experiencing the worst performance?
+
+== Why this matters
+
+ParasolCloud's current challenge reflects a common problem in production LLM deployments:
+
+* **Adding more GPUs improves capacity** (you can handle more requests)
+* **But it doesn't necessarily improve tail latency** (your worst-case users don't get faster responses)
+
+Without intelligent routing, each GPU operates independently with isolated KV caches. Similar requests hitting different GPUs repeat the same computation work, causing:
+
+* Unpredictable response times for users during peak hours
+* Wasted prefill computation for multi-turn conversations
+* Poor experience for customers with complex queries
+
+**llm-d's promise**: Cache-aware routing that directs similar requests to the same backend, maximizing KV cache reuse and dramatically reducing P95/P99 latency.
+
+**Your job**: Prove whether this works for ParasolCloud's real-world workload.
 
 == What you'll deliver
 
-* **Baseline tail latency data** - Single GPU vLLM P95/P99 measurements across different scenarios
-* **Naive scaling analysis** - Multi-GPU deployment showing that more GPUs don't fix tail latency
-* **llm-d performance comparison** - Cache-aware routing dramatically reducing P95/P99 latency
-* **Customer experience impact** - Quantified improvements for your most frustrated users
-* **Implementation roadmap** - Deployment timeline and production considerations
+By the end of this workshop, you'll have:
 
-Your goal is to provide ParasolCloud with a clear, data-driven decision on whether llm-d can deliver consistently low latency for all customers—especially those currently experiencing the worst performance.
+* **Baseline performance data** - Single GPU vLLM P95/P99 latency measurements
+* **Scaling analysis** - Multi-GPU deployment results showing whether naive scaling helps tail latency
+* **llm-d evaluation** - Cache-aware routing performance with quantified P95/P99 improvements
+* **Customer impact report** - Translation of latency metrics into user experience improvements
+* **Technical recommendation** - Data-driven decision on llm-d adoption for production
+
+== Success criteria
+
+You'll succeed if you can answer these questions with data:
+
+✓ What is ParasolCloud's current tail latency problem? (P95/P99 baseline)
+
+✓ Does adding more GPUs fix the problem? (Multi-GPU naive scaling results)
+
+✓ How much does llm-d improve the worst-case user experience? (P95/P99 reduction with cache-aware routing)
+
+✓ When does llm-d provide the most value? (Workload patterns that benefit from cache sharing)
+
+✓ Should ParasolCloud adopt llm-d for production? (ROI and deployment feasibility)
+
+Your recommendation needs to be **business-focused** ("this improves experience for our most frustrated customers") while backed by **rigorous technical benchmarks** (P50/P95/P99 latency data).

@@ -6,6 +6,7 @@
 == Timing and schedule
 
 === Full workshop (120 minutes / 2 hours)
+
 * **Module 1**: Introduction & Core Concepts (20 minutes)
 * **Module 2**: Deploy Model with vLLM & Benchmark (25 minutes)
 * **Module 3**: Scale vLLM & Compare Performance (25 minutes)
@@ -14,6 +15,7 @@
 
 === Abbreviated workshop (90 minutes)
 If time is constrained, consider these adjustments:
+
 * **Module 1**: Introduction & Core Concepts (15 minutes) - Focus on key concepts only
 * **Module 2**: Deploy Model with vLLM & Benchmark (20 minutes) - Use pre-deployed baseline
 * **Module 3**: Scale vLLM & Compare Performance (20 minutes) - Show results vs. hands-on
