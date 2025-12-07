@@ -497,7 +497,14 @@ spec:
           persistentVolumeClaim:
             claimName: guidellm-vllm-single-sweep-results
 EOF
+----
 
+Check the logs of the Job to monitor progress:
+
+[.console-input]
+[source,bash]
+----
+# Follow the Job logs
 oc logs -f job/guidellm-vllm-single-sweep
 ----
 
