@@ -106,7 +106,7 @@ Establish your tail latency baseline:
 Discover why naive scaling doesn't fix tail latency:
 
 * Deploy vLLM with 4 replicas (1 per GPU) using InferenceService
-* Observe round-robin load balancing with isolated KV caches
+* Observe random load balancing with isolated KV caches
 * Run the same benchmark and compare P95/P99 latency
 * Compare P95/P99 latency: Does adding GPUs help your worst-case users?
 

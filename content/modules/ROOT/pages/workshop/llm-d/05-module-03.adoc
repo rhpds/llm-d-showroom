@@ -3,16 +3,20 @@
 :toc: macro
 :toclevels: 2
 
-You've measured your single-GPU tail latency baseline: P95 TTFT reaches 800-1200ms under load. ParasolCloud's customers are frustrated. The obvious solution: add more GPUs to reduce queuing.
+You've measured your single-GPU tail latency baseline: P95 TTFT reaches almost 5000ms under load.
+ParasolCloud's customers are frustrated. The obvious solution: add more GPUs to reduce queuing.
 
-In this module, you'll scale to 4 GPUs using naive horizontal scaling, run the same benchmarks, and discover a critical insight: **more GPUs increase capacity but don't fix tail latency**.
+In this module, you'll scale to 4 GPUs using naive horizontal scaling,
+run the same benchmark, and discover a critical insight:
+**more GPUs increase capacity but they can't always fix tail latency**.
 
 == Learning objectives
+
 By the end of this module, you'll be able to:
 
-* Scale vLLM deployment to multiple GPUs with round-robin load balancing
-* Run benchmarks across both scenarios (single-turn and multi-turn)
-* Demonstrate that naive scaling doesn't reduce P95/P99 latency
+* Scale vLLM deployment to multiple GPUs with random load balancing
+* Run our custom multi-turn benchmark again, using the dashboard controls to compare and contrast
+* Demonstrate that naive scaling doesn't reduce the worst of our latency
 * Understand why isolated KV caches cause persistent tail latency problems
 
 == Understanding naive scaling
@@ -20,262 +24,477 @@ By the end of this module, you'll be able to:
 Before deploying, understand what "naive scaling" means:
 
 **Naive horizontal scaling**:
+
 * Deploy multiple independent vLLM instances (1 per GPU)
-* Use round-robin or random load balancing
+* Use random load balancing
 * Each instance maintains its own isolated KV cache
 * No coordination between instances
 
 **What this achieves**:
+
 * ✅ Increases capacity (more requests per second)
-* ❌ **Does NOT reduce P95/P99 tail latency**
+* ❌ **Does NOT guarantee reduction in P95/P99 tail latency**
 
 **Why tail latency doesn't improve**:
-* **Cache misses persist**: Round-robin routing spreads requests randomly
-* **Single-turn shared prefixes**: Every instance recomputes the 300-token system prompt
+
+* **Cache misses persist**: Random routing spreads requests roughly evenly, with no regard for cache
 * **Multi-turn conversations**: Conversation turns land on different instances, causing cache misses
 * **No coordination**: Instances don't know what other instances have cached
 
-**The critical insight**: Adding GPUs gives you more *capacity* to handle traffic, but your most frustrated users (P95/P99) still experience high latency because cache misses cause redundant prefill computation.
+**The critical insight**: Adding GPUs gives you more *capacity* to handle traffic,
+but your most frustrated users (P95/P99) still experience high latency because cache
+misses cause redundant prefill computation, negating one of vLLM's greatest benefits.
 
 == Exercise 1: Deploy vLLM with 4 replicas
 
-You'll create a single InferenceService configured to scale to 4 replicas, with each replica running on its own GPU.
+You'll create a single InferenceService configured to scale to 4 replicas,
+with each replica running on its own GPU.
 
 === Clean up single-GPU deployment
 
 First, remove your single-GPU deployment:
 
+[.console-input]
 [source,bash]
 ----
 # Delete previous InferenceService
 oc delete inferenceservice llama-vllm-single
+----
 
-# Verify deletion
-oc get inferenceservice
+Expected output:
+
+[.console-output]
+[source,bash]
+----
+inferenceservice.serving.kserve.io "llama-vllm-single" deleted
 ----
 
 === Deploy scaled vLLM InferenceService
 
 Create an InferenceService with 4 replicas for naive horizontal scaling:
 
+[.console-input]
 [source,bash]
 ----
-cat > llama-vllm-scaled.yaml << 'EOF'
+cat << 'EOF' | oc apply -f-
 apiVersion: serving.kserve.io/v1beta1
 kind: InferenceService
 metadata:
   name: llama-vllm-scaled
   annotations:
+    openshift.io/display-name: Llama 3.1 8B FP8 Scaled
+    security.opendatahub.io/enable-auth: "false"
     serving.kserve.io/deploymentMode: RawDeployment
+    opendatahub.io/hardware-profile-name: accelerated-profile
+    opendatahub.io/hardware-profile-namespace: redhat-ods-applications
+  labels:
+    networking.kserve.io/visibility: exposed
 spec:
   predictor:
     automountServiceAccountToken: false
-    imagePullSecrets:
-      - name: secret-pafskz
     maxReplicas: 4
     minReplicas: 4
+    deploymentStrategy:
+      type: Recreate
     model:
       modelFormat:
         name: vLLM
       name: ''
       resources:
         limits:
-          cpu: '2'
-          memory: 4Gi
+          cpu: '8'
+          memory: 16Gi
           nvidia.com/gpu: '1'
         requests:
           cpu: '2'
-          memory: 4Gi
+          memory: 8Gi
           nvidia.com/gpu: '1'
-      runtime: llama
+      runtime: rhaiis-cuda
       storageUri: 'oci://registry.redhat.io/rhelai1/modelcar-llama-3-1-8b-instruct-fp8-dynamic:1.5'
+      args:
+        - --max-model-len=65536
 EOF
 ----
 
-IMPORTANT: If you need to authenticate to Hugging Face (for gated models), add the `HF_TOKEN` environment variable as shown in Module 2.
+Expected output:
 
-Apply the InferenceService:
-
+[.console-output]
 [source,bash]
 ----
-# Deploy the scaled InferenceService
-oc apply -f llama-vllm-scaled.yaml
-
-# Watch deployment progress
-watch oc get inferenceservice llama-vllm-scaled
+inferenceservice.serving.kserve.io/llama-vllm-scaled created
 ----
 
-Wait for the InferenceService to reach `Ready` state. This may take 10-15 minutes as all 4 replicas download and load the model.
+=== Monitor deployment progress
 
-Monitor progress:
+[NOTE]
+====
+As before, you can follow along in OpenShift AI's dashboard if you like.
+====
 
+Watch the InferenceService status:
+
+[.console-input]
 [source,bash]
 ----
-# Check all pods (should see 4 replicas)
-oc get pods -l serving.kserve.io/inferenceservice=llama-vllm-scaled -w
-
-# Check logs from all replicas
-oc logs -l serving.kserve.io/inferenceservice=llama-vllm-scaled --all-containers -f
+# Watch InferenceService status, use Ctrl+C to cancel when it shows ready
+oc get inferenceservice llama-vllm-scaled -w
 ----
+
+Example output:
+
+[.console-output]
+[source,bash]
+----
+NAME                URL                                                                                        READY   PREV   LATEST   PREVROLLEDOUTREVISION   LATESTREADYREVISION   AGE
+llama-vllm-scaled   https://llama-vllm-scaled-llm-d-project.apps.cluster-6slff.6slff.sandbox5571.opentlc.com   False                                                                 5s
+llama-vllm-scaled   https://llama-vllm-scaled-llm-d-project.apps.cluster-6slff.6slff.sandbox5571.opentlc.com   False                                                                 15s
+llama-vllm-scaled   https://llama-vllm-scaled-llm-d-project.apps.cluster-6slff.6slff.sandbox5571.opentlc.com   True                                                                  117s
+----
+
+The deployment will progress to `READY` being `True` after the model is loaded. You can press `Ctrl+C` to cancel once it does.
+Again, the model and serving runtime should already have been downloaded to your node, so this won't take too long.
+The models are being loaded into VRAM, along with CUDA graphs and preallocating KV cache space.
 
 === Verify the deployment
 
 Check that all 4 replicas are running:
 
+[.console-input]
 [source,bash]
 ----
 # Verify 4 pods are running
 oc get pods -l serving.kserve.io/inferenceservice=llama-vllm-scaled
-
-# Get the inference URL
-INFERENCE_URL=$(oc get inferenceservice llama-vllm-scaled -o jsonpath='{.status.url}')
-echo "Inference URL: ${INFERENCE_URL}"
-
-# Test the endpoint
-curl -k ${INFERENCE_URL}/v1/models
 ----
 
-The endpoint should respond with model information. With 4 replicas, Knative will automatically load balance requests in a round-robin fashion across all instances.
+Example output:
+
+[.console-output]
+[source,bash]
+----
+NAME                                          READY   STATUS    RESTARTS   AGE
+llama-vllm-scaled-predictor-78667f5b9-gzlpn   2/2     Running   0          2m7s
+llama-vllm-scaled-predictor-78667f5b9-l6bjr   2/2     Running   0          112s
+llama-vllm-scaled-predictor-78667f5b9-rms4x   2/2     Running   0          112s
+llama-vllm-scaled-predictor-78667f5b9-s5hrp   2/2     Running   0          112s
+----
+
+Then, check the endpoint to make sure it's behaving:
+
+[.console-input]
+[source,bash]
+----
+# Get the inference URL from the InferenceService
+INFERENCE_URL=$(oc get inferenceservice llama-vllm-scaled -o jsonpath='{.status.url}')
+# Test the endpoint
+curl ${INFERENCE_URL}/v1/models | jq .
+----
+
+[.console-output]
+[source,bash]
+----
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0Handling connection for 8080
+100   479  100   479    0     0  47900      0 --:--:-- --:--:-- --:--:-- 47900
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "llama-vllm-scaled",
+      "object": "model",
+      "created": 1765039812,
+      "owned_by": "vllm",
+      "root": "/mnt/models",
+      "parent": null,
+      "max_model_len": 65536,
+      "permission": [
+        {
+          "id": "modelperm-071430e45db64579ae4e02ccfc53cbe7",
+          "object": "model_permission",
+          "created": 1765039812,
+          "allow_create_engine": false,
+          "allow_sampling": true,
+          "allow_logprobs": true,
+          "allow_search_indices": false,
+          "allow_view": true,
+          "allow_fine_tuning": false,
+          "organization": "*",
+          "group": null,
+          "is_blocking": false
+        }
+      ]
+    }
+  ]
+}
+----
+
+The endpoint should respond with model information. With 4 replicas, KServe will automatically load balance requests in a random fashion across all instances.
 
 === Understanding the naive load balancing
 
 With this deployment:
 
-* **Knative automatically load balances** requests across all 4 replicas
-* **No session affinity**: Each request can go to any replica (round-robin)
+* **KServe automatically load balances** requests across all 4 replicas
+* **No session affinity**: Each request can go to any replica
 * **Isolated KV caches**: Each replica maintains its own separate cache
 * **No cache coordination**: Replicas don't share cache information
 
 This is "naive scaling" - we get 4x capacity, but tail latency won't improve because:
 
 1. Similar requests (with shared system prompts) land on different replicas → cache misses
-2. Multi-turn conversations spread across replicas → cache misses on every turn
-3. Round-robin routing ignores which replica has relevant cached prefixes
+2. Multi-turn conversations spread across replicas → cache misses frequently
+3. Random routing ignores which replica has relevant cached prefixes
 
 Let's benchmark to prove this.
 
-== Exercise 2: Run scaled benchmarks
+== Exercise 2: Run scaled benchmark
 
-Now run the same benchmarks you performed in Module 2, testing both scenarios to measure tail latency with 4 GPUs.
+Now run the same benchmark you performed at the end Module 2,
+testing our multi-turn scenario to measure tail latency with 4 GPUs.
 
-**Critical question**: Does adding 4x GPUs reduce P95/P99 latency?
+**Critical question**: Does using 4x GPUs reduce P95/P99 latency?
 
-=== Update Grafana to monitor all replicas
+=== Ensure Grafana metrics are collecting
 
-Before benchmarking, update your ServiceMonitor to capture metrics from all replicas:
+Make sure that KServe has created your ServiceMonitor
 
+[.console-input]
 [source,bash]
 ----
-cat > vllm-scaled-servicemonitor.yaml << 'EOF'
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  name: vllm-scaled-metrics
-spec:
-  selector:
-    matchLabels:
-      serving.kserve.io/inferenceservice: llama-vllm-scaled
-  endpoints:
-    - port: http
-      path: /metrics
-      interval: 30s
-EOF
+oc get servicemonitor llama-vllm-scaled-metrics
 ----
 
+Example output:
+
+[.console-output]
 [source,bash]
 ----
-oc apply -f vllm-scaled-servicemonitor.yaml
+NAME                        AGE
+llama-vllm-scaled-metrics   2m23s
 ----
 
-Create or update your Grafana dashboard to show aggregate metrics across all replicas, especially cache hit rates.
+=== Access (and configure) your Grafana dashboard
+
+Accessing Grafana again, it may be useful to refresh and explore the `model` pulldown menu.
+
+First, to recover the link again if you've closed the tab:
+
+[.console-input]
+[source,bash]
+----
+# Get Grafana route
+route=$(oc get route grafana-route -n grafana -ojsonpath='{.status.ingress[0].host}')
+# Output the dashboard link
+echo "https://$route/d/llm-performance/llm-d-performance-dashboard"
+
+# Open in browser (URL from command above)
+----
+
+You can select the `scaled` model from this pulldown to scope you graph to only the pods for this model.
+
+image::grafana-model-pulldown.png[]
 
 === Run the benchmark
 
-Run the same benchmark you performed in Module 2, now against the scaled deployment:
+Run the same benchmark you performed at the end of Module 2, now against the scaled deployment.
 
+Rerun the same benchmark from earlier:
+
+[.console-input]
 [source,bash]
 ----
-# Get InferenceService URL
 INFERENCE_URL=$(oc get inferenceservice llama-vllm-scaled -o jsonpath='{.status.url}')
-echo "INFERENCE_URL: ${INFERENCE_URL}"
 
-# Run benchmark with sweep profile
-guidellm benchmark \
-  --target "${INFERENCE_URL}" \
-  --profile sweep \
-  --max-seconds 60 \
-  --processor meta-llama/Meta-Llama-3.1-8B-Instruct \
-  --data "prompt_tokens=256,output_tokens=128"
+# Run baseline benchmark with sweep profile
+cat << EOF | oc apply -f-
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: custom-benchmark-vllm-scaled
+spec:
+  backoffLimit: 4
+  template:
+    spec:
+      serviceAccountName: default
+      restartPolicy: Never
+      containers:
+        - name: benchmark
+          image: quay.io/jharmison/multi-turn-benchmark:v0.0.2-test
+          args:
+            - ${INFERENCE_URL}/v1
+            - --parallel=9
+EOF
+
+oc wait --for=jsonpath='{.status.ready}'=1 job/custom-benchmark-vllm-scaled
+oc logs -f job/custom-benchmark-vllm-scaled
 ----
+
+Example output (to start):
+
+[.console-output]
+[source,bash]
+----
+job.batch/custom-benchmark-vllm-scaled created
+job.batch/custom-benchmark-vllm-scaled condition met
+================================================================================
+Multi-Turn Conversation Benchmark (Seed Documents)
+================================================================================
+Target URL: https://llama-vllm-scaled-llm-d-project.apps.cluster-6slff.6slff.sandbox5571.opentlc.com/v1
+Seed documents directory: /opt/app-root/src/seed-documents
+Conversations: 11
+Turns per conversation: 10
+Max tokens per response: 500
+Parallel workers: 9
+Request delay range: 0.5s - 2.0s
+================================================================================
+
+Loading seed documents...
+  Loaded: 01-python-ecommerce.py (CODE, 24,572 chars)
+  Loaded: 02-distributed-systems-whitepaper.md (TEXT, 13,841 chars)
+  Loaded: 03-kubernetes-controller.go (CODE, 20,255 chars)
+  Loaded: 04-machine-learning-research.md (TEXT, 12,065 chars)
+  Loaded: 05-rust-async-runtime.rs (CODE, 22,646 chars)
+  Loaded: 06-financial-analysis.md (TEXT, 13,827 chars)
+  Loaded: 07-react-dashboard.tsx (CODE, 50,345 chars)
+  Loaded: 08-medical-research.md (TEXT, 20,320 chars)
+  Loaded: 09-database-schema.sql (CODE, 47,346 chars)
+  Loaded: 10-water-treatment.md (TEXT, 29,230 chars)
+  Loaded: 11-compiler-design.md (TEXT, 55,362 chars)
+
+Loaded 11 seed documents
+  Code documents: 5
+  Text documents: 6
+✓ Found model: llama-vllm-scaled
+
+Initialized 11 conversations
+
+================================================================================
+WARM-UP PHASE
+================================================================================
+----
+
+While this runs, observe the Grafana dashboard.
 
 === Compare results
 
-Compare your P95 TTFT results:
+As our turns start, the KV cache hit rate looks abysmal as none of our conversations have been seen before.
+As time goes on, the cache hit rate starts looking pretty high, and our TTFT latencies are, if not great, not horrific looking.
+There's some hidden complexity here, though.
+When any part of our request has anything in the KV cache, it counts as a KV cache hit. That doesn't mean that our entire prefix or request has been hit,
+and many times we will have to recompute large chunks of the prompt anyways.
 
-* **Single GPU (Module 2)**: Record your baseline P95 TTFT
-* **4 GPUs (this module)**: Record your scaled P95 TTFT
+In the dashboard, you can see P95 and P99 values for the TTFT around 5 seconds as we near the end of the test and the cache get pretty large.
+Our benchmark client is reporting in the logs numbers around 25 full seconds per request!
 
-**Critical observation**: Despite having 4x the GPUs, you should observe that P95/P99 latency shows minimal improvement. Capacity (throughput) increases, but tail latency does not significantly improve.
+image::benchmark-dashboard-scaled.png[]
 
-**Why?** Round-robin routing spreads requests across 4 replicas. Each replica maintains its own isolated KV cache, so cache misses occur frequently - especially for:
+When your benchmark finishes, you should again see a results summary similar to the following:
 
-1. **Single-turn requests**: Each replica recomputes shared system prompts
-2. **Multi-turn conversations**: Conversation turns land on different replicas, causing cache misses on every turn
+[.console-output]
+[source,bash]
+----
+================================================================================
+BENCHMARK SUMMARY
+================================================================================
 
-**The problem**: With 4 replicas and round-robin routing, only 25% chance a follow-up lands on the same replica. 75% of conversation turns experience cache misses.
+Total time: 310.09s
+Total requests: 110
+Completed conversations: 11/11
+Requests per second: 0.35
 
-== Exercise 3: Analyze tail latency results
+Time to First Token (TTFT):
+  Min:         79.64 ms
+  Max:       3583.02 ms
+  Mean:       325.18 ms
+  P50:        129.49 ms
+  P95:       2639.31 ms
+  P99:       3154.75 ms
 
-Compare your single-GPU and 4-GPU P95/P99 latency results.
+Total Request Time:
+  Min:       9252.22 ms
+  Max:      28695.92 ms
+  Mean:     22561.87 ms
+  P50:      23382.86 ms
+  P95:      27003.11 ms
+
+TTFT by Turn Number:
+  Turn  1:    2144.08 ms avg (11 requests)
+  Turn  2:     117.42 ms avg (11 requests)
+  Turn  3:     118.02 ms avg (11 requests)
+  Turn  4:     120.61 ms avg (11 requests)
+  Turn  5:     127.05 ms avg (11 requests)
+  Turn  6:     125.45 ms avg (11 requests)
+  Turn  7:     113.93 ms avg (11 requests)
+  Turn  8:     125.93 ms avg (11 requests)
+  Turn  9:     123.39 ms avg (11 requests)
+  Turn 10:     135.90 ms avg (11 requests)
+
+TTFT by Document Type:
+  CODE:       342.48 ms avg (50 requests)
+  TEXT:       310.76 ms avg (60 requests)
+
+First Turn vs Subsequent Turns (Prefix Caching Indicator):
+  First turn avg:     2144.08 ms
+  Later turns avg:     123.08 ms
+  Speedup ratio:        17.42x
+
+================================================================================
+----
+
+== Exercise 3: Analyze the results
+
+Compare your single-GPU and 4-GPU P95 latency results.
+In particular, check out that speedup for later turns when we have four GPUs worth of KV cache available!
+It's doing much better this time than before, our instances aren't overloaded.
+
+This time, the benchmark should only take around 5-6 minutes to run, because we're not severely overloading our vLLM instances and dragging the conversations out.
 
 === Record your comparison
 
-Create a comparison of your results:
+When the benchmark finishes, create a comparison of your results:
 
 [source,text]
 ----
 === Tail Latency Comparison: 1 GPU vs. 4 GPUs ===
 
 Single GPU (Module 2):
-- P95 TTFT: _______ (your recorded value)
+- P95 TTFT: _______
 
-4 GPUs with Round-Robin (Module 3):
-- P95 TTFT: _______ (your recorded value)
+4 GPUs with random load balancing (Module 3):
+- P95 TTFT: _______
 
 Improvement: _______ %
 ----
 
 === The fundamental problem
 
-**Capacity vs. Latency**:
-* Capacity (throughput): 4 GPUs = ~4x improvement ✅
-* Tail latency (P95/P99): 4 GPUs = minimal or NO improvement ❌
-
-**Why tail latency doesn't improve**:
-* Every request may recompute shared prefixes (cache miss)
-* Multi-turn conversations spread across replicas (no cache reuse)
-* Round-robin routing ignores cache state (random placement)
-* 4 isolated caches = wasted prefill computation
-
 **ParasolCloud's Challenge**:
+
+* Fixed hardware budget, the GPUs we're using in production are the GPUs we have
 * Customer complaints about slow responses continue
-* Adding more GPUs won't solve the tail latency problem
-* Need intelligent cache-aware routing to reduce P95/P99
+* We can't throw more compute at this problem and hope it goes away
+
+Given the hardware on hand, we have a benchmark that approaches what we're seeing in production.
+We're averaging a respectable ~300ms TTFT, but those numbers are over 2000ms for 1/20th of all of our users.
+
+We need to inference smarter.
+We have dozens of competing ideas for how to get there, between load balancer optimizations, KV cache offloading with third party appliances, or even a radically different architecture.
+We need a well lit path to get there.
 
 === Visualize the tail latency problem
 
-The key problem is cache isolation causing high P95/P99 latency:
+The key problem is cache isolation causing high P95 latency:
 
 [source,text]
 ----
-Single-turn requests (round-robin routing)
+Single-turn requests (round-robin/random routing)
 ------------------------------------------
 Request 1: "System prompt... User asks: reset password?"
   → Routes to Replica 1
   → Computes full prefix, caches result
 
 Request 2: "System prompt... User asks: business hours?"
-  → Routes to Replica 2 (round-robin)
+  → Routes to Replica 2 (round-robin/random)
   → Cache miss! Recomputes entire system prompt
   → **Redundant prefill computation**
 
@@ -284,14 +503,14 @@ Request 3: "System prompt... User asks: track order?"
   → Cache miss! Recomputes system prompt again
   → **Another cache miss**
 
-Multi-turn conversation (round-robin routing)
+Multi-turn conversation (round-robin/random routing)
 ---------------------------------------------
 Turn 1: "Customer: I have a problem."
   → Routes to Replica 1
   → Computes full context, caches result
 
 Turn 2: "Customer: I have a problem. Agent: ... Customer: Follow-up?"
-  → Routes to Replica 3 (round-robin)
+  → Routes to Replica 3 (round-robin/random)
   → Cache miss! Recomputes entire conversation history
   → **Multi-turn latency spike**
 
@@ -301,80 +520,34 @@ Turn 3: Growing context...
   → **Your most frustrated user**
 ----
 
-=== The tail latency insight
-
-**Why More GPUs Don't Fix Tail Latency:**
-
-**Capacity (throughput)**: How many requests per second
-* More GPUs = More capacity ✅
-
-**Tail Latency (P95/P99)**: Experience of your most frustrated users
-* More GPUs ≠ Better P95/P99 ❌
-
-**Why Naive Scaling Fails for Tail Latency:**
-
-1. **Cache fragmentation**: 4 isolated caches = cache misses
-2. **Random routing**: Requests hit different replicas randomly
-3. **Redundant prefill**: Every replica recomputes shared prefixes
-4. **Multi-turn disasters**: Conversations spread across replicas
-
 **The Solution Needed:**
 
-**Intelligent cache-aware routing** that:
+Intelligent cache-aware routing that:
+
 * Routes similar requests to same replica (cache hits)
 * Routes conversation turns to same replica (context reuse)
 * Eliminates redundant prefill computation
 * **Directly reduces P95/P99 latency**
 
-== Exercise 4: Observe cache behavior in Grafana
-
-While benchmarks run, monitor vLLM metrics:
-
-1. Open Grafana dashboard
-2. Run a high-load benchmark
-3. Observe:
-   * **GPU cache usage per replica**: Each maintains its own cache
-   * **Cache hit rate**: Very low (~5-10% at best)
-   * **Compute utilization**: High prefill compute on all replicas
-   * **Uneven load**: Some replicas busier than others
-
-Take screenshots showing:
-* Cache hit rates across 4 replicas
-* GPU utilization per replica
-* Request distribution
-
-These visualizations demonstrate the problem llm-d solves.
-
 == Module 3 summary
 
 **What you accomplished:**
-* Scaled vLLM deployment from 1 to 4 GPUs with round-robin load balancing
+
+* Scaled vLLM deployment from 1 to 4 GPUs with random load balancing
 * Ran benchmarks to compare tail latency with more GPUs
-* Demonstrated the critical insight: **More GPUs ≠ Better P95/P99 latency**
+* Demonstrated the critical insight: **More GPUs ≠ perfect P95/P99 latency**
 
 **Key takeaways:**
-* **Capacity vs. Latency**: 4 GPUs increase throughput (capacity) but don't reduce tail latency
-* **P95/P99 barely improves**: Compare your results - you should see minimal improvement
-* **Critical insight**: Round-robin routing + isolated caches = persistent tail latency problems
 
-**The fundamental problem:**
-* 4 vLLM replicas = 4 isolated KV caches
-* Round-robin routing spreads requests randomly (ignores cache state)
-* Shared prefixes recomputed on every replica (cache misses)
-* Multi-turn conversations recompute entire history on each turn
-* **Your most frustrated users (P95/P99) see no improvement**
-
-**ParasolCloud's reality:**
-* ✅ Capacity increased with more GPUs
-* ❌ Customer complaints continue: P95 latency not significantly improved
-* ❌ Most frustrated users: Still experiencing slow responses
-
-**The critical distinction:**
-* **Scaling for capacity**: Add more GPUs → More requests/second ✅
-* **Scaling for latency**: Need intelligent routing → Faster responses for worst-case users ❌
+* **Capacity vs. Latency**: 4 GPUs increase throughput (capacity)
+* **TTFT still not a good user experience**: We're recomputing a lot of prefill every time
+* **Critical insight**: Round-robin/random load balancing + isolated caches = persistent tail latency problems
 
 **The question:**
-Can intelligent cache-aware routing dramatically reduce P95/P99 latency without adding more hardware?
+
+Can intelligent cache-aware routing dramatically reduce P95/P99 latency without adding more hardware, or rearchitecting our network?
 
 **Next steps:**
-Module 4 will deploy llm-d with Precise Prefix Cache Aware Routing. You'll configure llm-d to orchestrate your 4 vLLM replicas intelligently, routing requests to maximize cache hits and directly reduce P95/P99 latency.
+
+Module 4 will deploy the same model, on the same hardware, with llm-d with Precise Prefix Cache Aware Routing.
+You'll configure llm-d to orchestrate your 4 vLLM replicas intelligently, routing requests to maximize cache hits and directly reduce P95/P99 latency.

@@ -8,6 +8,7 @@ Now it's time to establish your performance baseline. Before evaluating llm-d's 
 In this module, you'll deploy Llama 3.1 8B with vLLM on a single GPU using KServe in OpenShift AI, configure monitoring, and run comprehensive benchmarks with GuideLLM.
 
 == Learning objectives
+
 By the end of this module, you'll be able to:
 
 * Deploy a generative AI model using KServe and vLLM ServingRuntime in OpenShift AI
@@ -170,6 +171,12 @@ inferenceservice.serving.kserve.io/llama-vllm-single created
 
 === Monitor deployment progress
 
+[NOTE]
+====
+If you want, you can view progress in the OpenShift AI dashboard.
+The deployments we're doing should reflect properly there, as if you had filled out the UI.
+====
+
 Watch the InferenceService status:
 
 [.console-input]
@@ -315,27 +322,22 @@ Example output:
 
 So, our single vLLM instance is up and running our Llama model successfully!
 
-== Exercise 2: Configure Grafana monitoring
+== Exercise 2: Explore Grafana monitoring
 
 To understand vLLM performance, you need metrics visualization.
 We'll start by looking over the vLLM metrics themselves, then move on to a more visual representation.
 There is a pre-deployed Grafana dashboard that will help with this lab.
 Let's make sure it's up and recording data from our model server instance.
 
-=== Expose vLLM metrics endpoint
+=== Explore vLLM metrics endpoint
 
 vLLM exposes Prometheus metrics on its metrics port. Verify the service is exposing metrics:
 
 [.console-input]
 [source,bash]
 ----
-# Find the vLLM pod
-POD_NAME=$(oc get pod -l serving.kserve.io/inferenceservice=llama-vllm-single -oname)
-echo $POD_NAME
-
-# Port-forward to test metrics endpoint
-oc port-forward ${POD_NAME} 8080:8080 &
-# You may want to press Enter an extra time or two here
+# Port forward to the metrics endpoint
+oc port-forward deployment/llama-vllm-single-predictor 8080:8080
 ----
 
 Example output:
@@ -351,6 +353,8 @@ Forwarding from [::1]:8080 -> 8080
 [lab-user@bastion ~]$
 [lab-user@bastion ~]$
 ----
+
+Then, get the metrics:
 
 [.console-input]
 [source,bash]
@@ -425,21 +429,6 @@ Login with your OpenShift credentials.
 Now establish your performance baseline by running comprehensive benchmarks with GuideLLM.
 We'll be using a Job on OpenShift to make sure that our containerized GuideLLM implementation is consistent.
 
-=== Get the inference URL
-
-First, make sure you have saved your InferenceService URL and that it's still working as expected:
-
-[.console-input]
-[source,bash]
-----
-# Get the inference URL
-INFERENCE_URL=$(oc get inferenceservice llama-vllm-single -o jsonpath='{.status.url}')
-echo "INFERENCE_URL: ${INFERENCE_URL}"
-
-# Verify the endpoint is accessible
-curl ${INFERENCE_URL}/v1/models | jq .
-----
-
 === Run baseline benchmark
 
 Run a benchmark to establish your single-GPU baseline performance:
@@ -447,20 +436,10 @@ Run a benchmark to establish your single-GPU baseline performance:
 [.console-input]
 [source,bash]
 ----
+# Get the inference URL again, in case your terminal disconnected
+INFERENCE_URL=$(oc get inferenceservice llama-vllm-single -o jsonpath='{.status.url}')
 # Run baseline benchmark with sweep profile
 cat << EOF | oc apply -f-
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: guidellm-vllm-single-sweep-results
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 1Gi
-  volumeMode: Filesystem
----
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -494,10 +473,10 @@ spec:
         - name: home
           emptyDir: {}
         - name: results
-          persistentVolumeClaim:
-            claimName: guidellm-vllm-single-sweep-results
+          emptyDir: {}
 EOF
 
+oc wait --for=jsonpath='{.status.ready}'=1 job/guidellm-vllm-single-sweep
 oc logs -f job/guidellm-vllm-single-sweep
 ----
 
@@ -506,6 +485,8 @@ Example output (to start):
 [.console-output]
 [source,bash]
 ----
+job.batch/guidellm-vllm-single-sweep created
+job.batch/guidellm-vllm-single-sweep condition met
 ✔ OpenAIHTTPBackend backend validated with model llama-vllm-single
   {'target':
   'https://llama-vllm-single-llm-d-project.apps.cluster-fnj7b.fnj7b.sandbox5571.
@@ -572,6 +553,8 @@ While the benchmark runs:
 GuideLLM will take about ten minutes to complete the full benchmark suite.
 The terminal will hang while this happens.
 You may want to press `Enter` occasionally to prevent the Showroom environment from timing out.
+If you need to check the logs after your terminal times out, you can just rerun the following:
+`oc logs -f job/guidellm-vllm-single-sweep`
 ====
 
 When complete, GuideLLM will output performance metrics including:
@@ -588,14 +571,171 @@ As of the time of writing, GuideLLM doesn't have good support for multi-turn ben
 Take note of your P95 TTFT values, in particular. Some of them are quite high when highly concurrent, as we overloaded this vLLM instance.
 In order to better understand our options for our expected use cases at ParasolCloud, let's use a custom benchmark.
 
-TODO: insert first pass of custom benchmark here
+== Exercise 4: Custom benchmarking
+
+We had irregular numbers of users, with very dissimilar use cases, reaching our production inference endpoint and causing KV cache evictions when load balancing against our production scaled inference cluster.
+Because of this, we created a custom benchmark with 11 different use case documents all asking different kinds of questions, and doing that in variable, irregular batch sizes with arbitrary delays to simulate user behavior.
+Our test environment has four replicas (or will in a minute...), so we'll use some numbers that aren't evenly divisible by four to cause a bit of a load balancing headache.
+
+Our custom benchmark is already containerized, so we just need to run it the same way we ran the GuideLLM benchmarks.
+
+=== Run the baseline customized benchmark
+
+Run a benchmark to establish your single-GPU baseline performance for our secnario:
+
+[.console-input]
+[source,bash]
+----
+# Get the inference URL again, just in case
+INFERENCE_URL=$(oc get inferenceservice llama-vllm-single -o jsonpath='{.status.url}')
+# Create the benchmark job
+cat << EOF | oc apply -f-
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: custom-benchmark-vllm-single
+spec:
+  backoffLimit: 4
+  template:
+    spec:
+      serviceAccountName: default
+      restartPolicy: Never
+      containers:
+        - name: benchmark
+          image: quay.io/jharmison/multi-turn-benchmark:v0.0.2-test
+          args:
+            - ${INFERENCE_URL}/v1
+            - --parallel=9
+EOF
+
+oc wait --for=jsonpath='{.status.ready}'=1 job/custom-benchmark-vllm-single
+oc logs -f job/custom-benchmark-vllm-single
+----
+
+Example output (to start):
+
+[.console-output]
+[source,bash]
+----
+job.batch/custom-benchmark-vllm-single created
+job.batch/custom-benchmark-vllm-single condition met
+================================================================================
+Multi-Turn Conversation Benchmark (Seed Documents)
+================================================================================
+Target URL: https://llama-vllm-single-llm-d-project.apps.cluster-6slff.6slff.sandbox5571.opentlc.com/v1
+Seed documents directory: /opt/app-root/src/seed-documents
+Conversations: 11
+Turns per conversation: 10
+Max tokens per response: 500
+Parallel workers: 9
+Request delay range: 0.5s - 2.0s
+================================================================================
+
+Loading seed documents...
+  Loaded: 01-python-ecommerce.py (CODE, 24,572 chars)
+  Loaded: 02-distributed-systems-whitepaper.md (TEXT, 13,841 chars)
+  Loaded: 03-kubernetes-controller.go (CODE, 20,255 chars)
+  Loaded: 04-machine-learning-research.md (TEXT, 12,065 chars)
+  Loaded: 05-rust-async-runtime.rs (CODE, 22,646 chars)
+  Loaded: 06-financial-analysis.md (TEXT, 13,827 chars)
+  Loaded: 07-react-dashboard.tsx (CODE, 50,345 chars)
+  Loaded: 08-medical-research.md (TEXT, 20,320 chars)
+  Loaded: 09-database-schema.sql (CODE, 47,346 chars)
+  Loaded: 10-water-treatment.md (TEXT, 29,230 chars)
+  Loaded: 11-compiler-design.md (TEXT, 55,362 chars)
+
+Loaded 11 seed documents
+  Code documents: 5
+  Text documents: 6
+✓ Found model: llama-vllm-single
+
+Initialized 11 conversations
+
+================================================================================
+WARM-UP PHASE
+================================================================================
+----
+
+=== Make observations during the benchmark pass
+
+This benchmark will take about 10 minutes to complete again.
+One of the things you should be able to notice, while monitoring the Grafana dashboard as it runs,
+is that as the request queue piles up, the TTFT and E2E latencies climb significantly.
+Right now, we're simulating 11 users worth of simultaneous multi-turn chat with a diverse set of use cases.
+We have a single instance of our model up right now, and it's struggling to keep up with the load.
+Another thing you should notice is that your KV cache hit rates start to climb a bit, compared to the GuideLLM benchmark.
+Because we're doing multi-turn chat, our new messages contain the chat history and this is resulting in a KV cache hit.
+
+image::benchmark-dashboard-single.png[]
+
+Keep an eye on the kinds of prompts that the benchmark is sending, and make some observations about the dashboard state while it goes.
+
+When it's finished, you should get a results summary like this:
+
+[.console-output]
+[source,bash]
+----
+================================================================================
+BENCHMARK SUMMARY
+================================================================================
+
+Total time: 672.31s
+Total requests: 110
+Completed conversations: 11/11
+Requests per second: 0.16
+
+Time to First Token (TTFT):
+  Min:         85.75 ms
+  Max:      26196.25 ms
+  Mean:      6718.04 ms
+  P50:       3632.15 ms
+  P95:      22249.44 ms
+  P99:      25653.86 ms
+
+Total Request Time:
+  Min:      13852.12 ms
+  Max:      83334.75 ms
+  Mean:     51820.98 ms
+  P50:      51447.94 ms
+  P95:      77591.03 ms
+
+TTFT by Turn Number:
+  Turn  1:    5275.22 ms avg (11 requests)
+  Turn  2:    1237.00 ms avg (11 requests)
+  Turn  3:     529.62 ms avg (11 requests)
+  Turn  4:    1604.98 ms avg (11 requests)
+  Turn  5:    3211.92 ms avg (11 requests)
+  Turn  6:    4487.96 ms avg (11 requests)
+  Turn  7:   10181.45 ms avg (11 requests)
+  Turn  8:   10590.06 ms avg (11 requests)
+  Turn  9:   14725.66 ms avg (11 requests)
+  Turn 10:   15336.50 ms avg (11 requests)
+
+TTFT by Document Type:
+  CODE:      7190.09 ms avg (50 requests)
+  TEXT:      6324.66 ms avg (60 requests)
+
+First Turn vs Subsequent Turns (Prefix Caching Indicator):
+  First turn avg:     5275.22 ms
+  Later turns avg:    6878.35 ms
+  Speedup ratio:         0.77x
+
+================================================================================
+----
+
+=== Analyze the results
+
+In particular, the most interesting numbers for today's exercise are in the P95 TTFT and Total request time (E2E latency). Record these for later.
+You can see that we didn't get a speedup on the later turns, despite hitting KV cache, because our instance was too overloaded to deal with it.
+
+Let's move on to the next module, where we'll look at deploying four naive vLLM replicas that we will load balance against to get an idea of how our hardware enables scale.
 
 == Module 2 summary
 
 **What you accomplished:**
 
 * Deployed Llama 3.1 8B Instruct using KServe and vLLM on single GPU
-* Configured Grafana monitoring for vLLM metrics
+* Evaluated Grafana monitoring for vLLM metrics
 * Ran GuideLLM benchmark to establish baseline performance, confirming fast and efficient inference with Red Hat AI Inference Server
 * Ran a custom benchmarking suite, designed to better model ParasolCloud's expected use cases, to measure P95 TTFT under load
 
@@ -604,13 +744,13 @@ TODO: insert first pass of custom benchmark here
 * Single GPU has limited capacity before latency degrades
 * Tail latency (P95/P99) degrades significantly when approaching saturation
 * vLLM metrics in Grafana provide real-time performance visibility
-* Your most frustrated users (P95/P99) experience significantly higher latency than median
+* Your most frustrated users (P95/P99) experience significantly higher latency than mean
 
 **ParasolCloud's baseline:**
 
-* Record your baseline P95 TTFT - you'll compare this in later modules
-* Key question: Will adding more GPUs reduce tail latency?
+* Record your multi-turn benchmark's P95 TTFT - you'll compare this in later modules
+* Key question: Will our tail latency be suitable for our users when we throw more GPUs at the problem?
 
 **Next steps:**
 
-Module 3 will scale your vLLM deployment to 4 GPUs using naive horizontal scaling. You'll discover a critical insight: **more GPUs increase capacity but don't fix tail latency**.
+Module 3 will scale your vLLM deployment to 4 GPUs using naive horizontal scaling.
