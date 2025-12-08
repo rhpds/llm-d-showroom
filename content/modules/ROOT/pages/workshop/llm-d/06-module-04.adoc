@@ -3,15 +3,14 @@
 :toc: macro
 :toclevels: 2
 
-You've proven that 4 GPUs with naive scaling don't significantly reduce P95/P99 tail latency—your most frustrated users still experience slow responses. Now it's time to deploy llm-d with Prefix Cache Aware Routing to dramatically reduce tail latency through intelligent cache reuse.
+You've proven that 4 GPUs with naive scaling don't significantly reduce P95/P99 tail latency—your most frustrated users still experience slow responses. Now it's time to deploy llm-d with Prefix Cache Aware Routing to try and reduce tail latency through intelligent cache reuse.
 
-In this module, you'll deploy llm-d to orchestrate your 4 vLLM instances with cache-aware routing, run the same benchmarks, and measure the P95/P99 improvements.
+In this module, you'll deploy llm-d to orchestrate 4 vLLM instances with cache-aware routing, run the same benchmarks, and test for P95/P99 improvements.
 
 == Learning objectives
 By the end of this module, you'll be able to:
 
 * Deploy llm-d with Prefix Cache Aware Routing configuration
-* Configure llm-d to orchestrate multiple vLLM backend instances
 * Use the Grafana dashboard to monitor cache hit rates
 * Execute benchmarks across both scenarios and measure P95/P99 latency reductions
 * Quantify customer experience improvements with real tail latency data
@@ -47,8 +46,6 @@ llm-d routing logic:
 5. Returns response to client
 ----
 
-**Key insight**: Your 4 vLLM instances keep running. llm-d sits in front as an intelligent reverse proxy.
-
 == Exercise 1: Deploy llm-d with LLMInferenceService
 
 === Clean up scaled-vLLM deployment
@@ -71,11 +68,11 @@ llm-d uses the **LLMInferenceService** custom resource to deploy an intelligent 
 
 * Deploys multiple vLLM inference pool replicas
 * Configures the llm-d router with intelligent scheduling plugins
-* Enables **precise-prefix-cache-scorer** for cache-aware routing
+* Enables **prefix-cache-scorer** for cache-aware routing
 
 === Create Gateway Object
 
-A GatewayClass and a Gateway for the inference service should be created.
+First of all a GatewayClass and a Gateway for the inference service should be created.
 
 [.console-input]
 [source,bash]
@@ -108,7 +105,7 @@ EOF
 
 === Create the LLMInferenceService
 
-Create the llm-d configuration with 4 replicas and precise-prefix-cache-aware routing:
+Create the llm-d configuration with 4 replicas and prefix-cache-aware routing:
 
 [.console-input]
 [source,bash]
@@ -198,7 +195,7 @@ spec:
       - name: main
         env:
           - name: VLLM_ADDITIONAL_ARGS
-            value: "--disable-uvicorn-access-log --max-model-len=16000 --gpu-memory-utilization=0.9"
+            value: "--disable-uvicorn-access-log --max-model-len=16000"
         resources:
           limits:
             cpu: '1'
@@ -224,7 +221,7 @@ EOF
 
 * **`replicas: 4`**: Deploys 4 vLLM inference pool instances
 * **`model.uri`**: Uses OCI registry to pull the pre-packaged FP8 quantized model
-* **`precise-prefix-cache-scorer`**: The intelligent routing plugin (weight: 3)
+* **`prefix-cache-scorer`**: The intelligent routing plugin (weight: 3)
 * **`queue-scorer`**: Balances queue depth (weight: 2)
 * **`kv-cache-utilization-scorer`**: Optimizes cache memory usage (weight: 2)
 * **Plugin weights**: Higher weight = more influence on routing decisions
@@ -257,6 +254,8 @@ This can take a few minutes as each instance pulls the model from the OCI regist
 * **4 Inference pool pods**: vLLM instances (1 per GPU) managed by llm-d
 * **Services **: Automatically created for access
 
+image::llm-d-topology.png[]
+
 === Verify llm-d is running
 
 Once the LLMInferenceService shows `Ready`, get the inference URL:
@@ -279,7 +278,7 @@ curl ${LLMD_URL}/v1/completions \
   }' | jq .
 ----
 
-Expected output: llm-d's router analyzes the prompt, routes to an inference pool instance based on cache state, and returns a completion.
+Expected output:
 
 [.console-output]
 [source,bash]
@@ -314,8 +313,6 @@ Expected output: llm-d's router analyzes the prompt, routes to an inference pool
 ----
 
 == Exercise 2: Configure llm-d monitoring
-
-Set up comprehensive monitoring for llm-d router and inference pool metrics.
 
 === Create ServiceMonitor for llm-d router
 
@@ -379,7 +376,6 @@ We're run the same scenario against llm-d to measure P95/P99 tail latency improv
 
 **Goal**: Demonstrate that intelligent routing dramatically reduces tail latency for your most frustrated users.
 
-
 === Run llm-d benchmark
 
 Run the same benchmark you performed in Modules 2 and 3, now against llm-d:
@@ -406,23 +402,98 @@ spec:
             - http://openshift-ai-inference-openshift-default.openshift-ingress.svc.cluster.local/llm-d-project/llama-llm-d/v1
             - --parallel=9
 EOF
+----
+
+While the benchmark runs, tail the logs to monitor progress:
+
+[.console-input]
+[source,bash]
+----
+oc logs -f job/custom-benchmark-vllm-scaled
+----
+
+While this runs, observe the Grafana dashboard.
 
 === Compare results
+
+As our turns start, the KV cache hit rate looks as bad as the benchmark we perfored against scaled vllm as none of our conversations have been seen before.
+But this time, the KV Cache hit rate gets steadily higher, up to 90%, demonstrating much improved cache hit rate.
+We can also see the TTFT metrics are are a lot smoother with fewer spikes.
+Overall, the results in Grafana look a lot smoother and more balanced.
+
+image::benchmark-dashboard-llm-d.png[]
 
 When your benchmark finishes, you should again see a results summary similar to the following:
 
 [.console-output]
 [source,bash]
 ----
+================================================================================
+BENCHMARK SUMMARY
+================================================================================
 
+Total time: 329.85s
+Total requests: 110
+Completed conversations: 11/11
+Requests per second: 0.33
 
+Time to First Token (TTFT):
+  Min:         91.25 ms
+  Max:       3843.17 ms
+  Mean:       361.73 ms
+  P50:        181.27 ms
+  P95:       1465.87 ms
+  P99:       3806.53 ms
+
+Total Request Time:
+  Min:         76.51 ms
+  Max:      33049.57 ms
+  Mean:     22908.39 ms
+  P50:      24590.28 ms
+  P95:      30933.66 ms
+
+TTFT by Turn Number:
+  Turn  1:    1991.52 ms avg (11 requests)
+  Turn  2:     158.48 ms avg (11 requests)
+  Turn  3:     157.08 ms avg (11 requests)
+  Turn  4:     168.91 ms avg (11 requests)
+  Turn  5:     183.76 ms avg (11 requests)
+  Turn  6:     174.61 ms avg (11 requests)
+  Turn  7:     168.92 ms avg (11 requests)
+  Turn  8:     185.47 ms avg (11 requests)
+  Turn  9:     178.06 ms avg (9 requests)
+  Turn 10:     185.00 ms avg (9 requests)
+
+TTFT by Document Type:
+  CODE:       371.58 ms avg (48 requests)
+  TEXT:       353.59 ms avg (58 requests)
+
+First Turn vs Subsequent Turns (Prefix Caching Indicator):
+  First turn avg:     1991.52 ms
+  Later turns avg:     173.02 ms
+  Speedup ratio:        11.51x
+
+================================================================================
+
+---
+
+When the benchmark finishes, create a comparison of your results:
+
+[.console-input]
+[source,text]
+----
+=== Tail Latency Comparison: 4 GPU vLLM vs. 4 GPU LLM-D ===
+
+ 4 GPU vLLM  (Module 3):
+- P95 TTFT: _______
+
+4 4 GPU LLM-D  (Module 4):
+- P95 TTFT: _______
+
+Improvement: _______ %
 ----
 
-Compare your P95 TTFT results across all three configurations:
-
-* **Single GPU (Module 2)**: Your baseline P95 TTFT
-* **4 GPUs naive (Module 3)**: Your scaled P95 TTFT
-* **4 GPUs llm-d (this module)**: Your llm-d P95 TTFT
+What difference are you seeing between the two runs?
 
 **Why llm-d works**:
 * llm-d routes requests with similar prefixes to the same backend
@@ -432,50 +503,13 @@ Compare your P95 TTFT results across all three configurations:
 
 **The key difference**: llm-d routes similar requests to the same backend, ensuring cache hits. Naive scaling routes randomly, causing cache misses and forcing recomputation.
 
-
-
 == Module 4 summary
 
 **What you accomplished:**
-* Deployed llm-d orchestrator with Precise Prefix Cache Aware Routing
+* Deployed llm-d orchestrator with Prefix Cache Aware Routing
 * Configured llm-d to intelligently manage 4 vLLM backend instances
-* Set up comprehensive monitoring with Grafana to track cache hits and P95/P99 latency
 * Ran benchmarks demonstrating tail latency improvements with cache-aware routing
 * Proved that intelligent routing solves the problem naive scaling couldn't
-
-**Key takeaways - The Tail Latency Breakthrough:**
-
-Compare your results across all three configurations:
-
-[.console-input]
-[source,text]
-----
-=== Your Results Summary ===
-
-Single GPU (Module 2):
-- P95 TTFT: _______ (your recorded value)
-
-4 GPUs Naive (Module 3):
-- P95 TTFT: _______ (your recorded value)
-- Improvement over single GPU: _______ %
-
-4 GPUs llm-d (Module 4):
-- P95 TTFT: _______ (your recorded value)
-- Improvement over naive: _______ %
-----
-
-**The critical insight:**
-* Same hardware (4 GPUs)
-* Same capacity (requests per second)
-* But **dramatically different customer experience** for P95/P99 users
-* **Cache-aware routing reduces the tail latency problem**
-
-**Why llm-d works for tail latency:**
-* **Analyzes prompt prefixes** and routes similar requests to same backend
-* **Maximizes KV cache hits**: Requests benefit from cached prefill
-* **Eliminates redundant computation**: Shared prefixes cached, not recomputed
-* **Routes multi-turn to same backend**: Conversation history stays cached
-* **Directly attacks the P95/P99 problem**: Cache hits mean your worst-case users avoid queuing
 
 **When llm-d provides value:**
 * Workloads with shared prefixes (system prompts, common contexts)
