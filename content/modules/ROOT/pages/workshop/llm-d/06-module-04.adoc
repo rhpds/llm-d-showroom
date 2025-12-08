@@ -27,7 +27,7 @@ Before deploying, understand how llm-d integrates with your existing vLLM instan
                            v
                    ┌───────────────┐
                    │  llm-d Pod    │
-                   │  (Orchestrator)│
+                   │ (Orchestrator)│
                    └───────┬───────┘
                            |
         ┌──────────────────┼──────────────────┐
@@ -51,6 +51,20 @@ llm-d routing logic:
 
 == Exercise 1: Deploy llm-d with LLMInferenceService
 
+=== Clean up scaled-vLLM deployment
+
+First, remove your inference service deployment, because llm-d will manage the vLLM deployment now.
+
+[.console-input]
+[source,bash]
+----
+# Delete previous InferenceService
+oc delete inferenceservice llama-vllm-scaled
+
+# Verify deletion
+oc get inferenceservice
+----
+
 === Understanding LLMInferenceService
 
 llm-d uses the **LLMInferenceService** custom resource to deploy an intelligent orchestration layer with precise-prefix-cache-aware routing. This is a Kubernetes-native approach that:
@@ -63,6 +77,7 @@ llm-d uses the **LLMInferenceService** custom resource to deploy an intelligent 
 
 The LLMInferenceService needs access to HuggingFace to download the model and tokenizer. Create a secret with your HuggingFace token:
 
+[.console-input]
 [source,bash]
 ----
 # Create secret with your HuggingFace token
@@ -72,10 +87,59 @@ oc create secret generic hf-secret \
 
 NOTE: If your workshop environment has pre-cached models, this step may be optional. Check with your instructor.
 
+=== Create Gateway Object
+
+A GatewayClass and a Gateway for the inference service should be created.
+
+[.console-input]
+[source,bash]
+----
+cat > gateway.yaml << 'EOF'
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: openshift-ai-inference
+spec:
+  controllerName: openshift.io/gateway-controller/v1
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  labels:
+    istio.io/rev: openshift-gateway
+  name: openshift-ai-inference
+  namespace: openshift-ingress
+spec:
+  gatewayClassName: openshift-ai-inference
+  listeners:
+    - allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values:
+                  - llm-d-project
+      hostname: inference-gateway.apps.{openshift_cluster_ingress_domain}
+      name: https
+      port: 443
+      protocol: HTTPS
+      tls:
+        certificateRefs:
+          - group: ''
+            kind: Secret
+            name: default-gateway-tls
+        mode: Terminate
+EOF
+----
+
 === Create the LLMInferenceService
 
 Create the llm-d configuration with 4 replicas and precise-prefix-cache-aware routing:
 
+[.console-input]
 [source,bash]
 ----
 cat > llm-d-inference.yaml << 'EOF'
@@ -107,6 +171,11 @@ spec:
                 value: /tmp/tokenizer-cache
               - name: XDG_CACHE_HOME
                 value: /tmp
+              - name: HF_TOKEN
+                valueFrom:
+                  secretKeyRef:
+                    name: hf-secret
+                    key: HF_TOKEN
             args:
               - --pool-group
               - inference.networking.x-k8s.io
@@ -143,7 +212,7 @@ spec:
                     weight: 3
             volumeMounts:
               - name: tokenizer-cache
-                mountPath: /tmp/tokenizer-cache
+                mountPath: /tmp/
         volumes:
           - name: tokenizer-cache
             emptyDir: {}
@@ -197,6 +266,7 @@ EOF
 
 === Apply the LLMInferenceService
 
+[.console-input]
 [source,bash]
 ----
 oc apply -f llm-d-inference.yaml
@@ -206,6 +276,7 @@ oc apply -f llm-d-inference.yaml
 
 Before the deployment completes, verify the HF_TOKEN is properly configured:
 
+[.console-input]
 [source,bash]
 ----
 # Wait for the deployment to be created
@@ -224,16 +295,18 @@ You should see both checks pass with ✓ marks.
 
 Watch the LLMInferenceService deployment:
 
+[.console-input]
 [source,bash]
 ----
 # Watch LLMInferenceService status
 oc get llminferenceservice llama-llm-d -w
 
 # Watch inference pool pods being created (4 replicas)
-oc get pods -l serving.kserve.io/inferenceservice=llama-llm-d -w
+oc get pods -l kserve.io/component=workload -w
 ----
 
 The deployment will go through these states:
+
 1. **Creating**: LLMInferenceService resource accepted
 2. **InProgress**: Router and inference pool pods deploying, models downloading
 3. **Ready**: All 4 inference pool instances ready, router active
@@ -241,16 +314,18 @@ The deployment will go through these states:
 This can take 10-15 minutes as each instance downloads the model.
 
 **What gets deployed**:
+
 * **1 Router pod**: The llm-d scheduler with precise-prefix-cache-aware routing
 * **4 Inference pool pods**: vLLM instances (1 per GPU) managed by llm-d
 * **Services and Routes**: Automatically created for external access
 
 **Check storage-initializer logs** (optional):
 
+[.console-input]
 [source,bash]
 ----
 # Get a pod name
-POD=$(oc get pods -l serving.kserve.io/inferenceservice=llama-llm-d -o jsonpath='{.items[0].metadata.name}')
+POD=$(oc get pods -l kserve.io/component=workload -o jsonpath='{.items[0].metadata.name}')
 
 # View storage-initializer logs
 oc logs $POD -c storage-initializer
@@ -262,6 +337,7 @@ You may see permission warnings like "Could not set the permissions on the file"
 
 Once the LLMInferenceService shows `Ready`, get the inference URL:
 
+[.console-input]
 [source,bash]
 ----
 # Get the llm-d inference URL
@@ -284,10 +360,11 @@ Expected output: llm-d's router analyzes the prompt, routes to an inference pool
 
 Check the router logs to see precise-prefix-cache-scorer in action:
 
+[.console-input]
 [source,bash]
 ----
 # Get router pod name
-ROUTER_POD=$(oc get pods -l app.kubernetes.io/component=router -o jsonpath='{.items[0].metadata.name}')
+ROUTER_POD=$(oc get pods -l app.kubernetes.io/component=llminferenceservice-router-scheduler -o jsonpath='{.items[0].metadata.name}')
 
 # View router logs showing routing decisions
 oc logs $ROUTER_POD --tail=50
@@ -302,18 +379,20 @@ oc logs $ROUTER_POD --tail=50
 
 **Issue**: LLMInferenceService stuck in "InProgress"
 **Solution**:
+
+[.console-input]
 [source,bash]
 ----
 # Check LLMInferenceService status
 oc describe llminferenceservice llama-llm-d
 
 # Check router pod status
-oc get pods -l app.kubernetes.io/component=router
-oc describe pod -l app.kubernetes.io/component=router
+oc get pods -l app.kubernetes.io/component=llminferenceservice-router-scheduler
+oc describe pod -l app.kubernetes.io/component=llminferenceservice-router-scheduler
 
 # Check inference pool pods
-oc get pods -l serving.kserve.io/inferenceservice=llama-llm-d
-oc logs -l serving.kserve.io/inferenceservice=llama-llm-d --tail=100
+oc get pods -l kserve.io/component=workload
+oc logs -l kserve.io/component=workload --tail=100
 
 # Common issues:
 # - GPU quota: Verify 4 GPUs available
@@ -322,7 +401,10 @@ oc logs -l serving.kserve.io/inferenceservice=llama-llm-d --tail=100
 ----
 
 **Issue**: Model download timeout
+
 **Solution**: If models are pre-cached on PVC, update the `uri`:
+
+[.console-input]
 [source,yaml]
 ----
 spec:
@@ -338,6 +420,7 @@ Set up comprehensive monitoring for llm-d router and inference pool metrics.
 
 Monitor the router's scheduling decisions and cache hit rates:
 
+[.console-input]
 [source,bash]
 ----
 cat > llm-d-router-servicemonitor.yaml << 'EOF'
@@ -348,7 +431,7 @@ metadata:
 spec:
   selector:
     matchLabels:
-      app.kubernetes.io/component: router
+      app.kubernetes.io/component: llminferenceservice-router-scheduler
   endpoints:
     - port: metrics
       path: /metrics
@@ -361,6 +444,7 @@ EOF
 
 Apply the ServiceMonitor:
 
+[.console-input]
 [source,bash]
 ----
 oc apply -f llm-d-router-servicemonitor.yaml
@@ -370,6 +454,7 @@ oc apply -f llm-d-router-servicemonitor.yaml
 
 Monitor the vLLM inference pool instances:
 
+[.console-input]
 [source,bash]
 ----
 cat > llm-d-pool-servicemonitor.yaml << 'EOF'
@@ -380,7 +465,7 @@ metadata:
 spec:
   selector:
     matchLabels:
-      serving.kserve.io/inferenceservice: llama-llm-d
+      app.kubernetes.io/component: llminferenceservice-workload
   endpoints:
     - port: metrics
       path: /metrics
@@ -393,6 +478,7 @@ EOF
 
 Apply the ServiceMonitor:
 
+[.console-input]
 [source,bash]
 ----
 oc apply -f llm-d-pool-servicemonitor.yaml
@@ -401,6 +487,7 @@ oc apply -f llm-d-pool-servicemonitor.yaml
 === Import llm-d Grafana dashboard
 
 Import the llm-d dashboard to visualize:
+
 * Request routing decisions
 * Cache hit rates per backend
 * Latency per backend
@@ -421,10 +508,11 @@ Key panels in llm-d dashboard:
 
 === Verify metrics are flowing
 
+[.console-input]
 [source,bash]
 ----
 # Get router pod name
-ROUTER_POD=$(oc get pods -l app.kubernetes.io/component=router -o jsonpath='{.items[0].metadata.name}')
+ROUTER_POD=$(oc get pods -l app.kubernetes.io/component=llminferenceservice-router-scheduler -o jsonpath='{.items[0].metadata.name}')
 
 # Port-forward to router metrics endpoint
 oc port-forward $ROUTER_POD 9090:9090 &
@@ -452,6 +540,7 @@ Now run the same two scenarios against llm-d to measure P95/P99 tail latency imp
 
 Before benchmarking, send some requests to prime the caches:
 
+[.console-input]
 [source,bash]
 ----
 # Send warmup requests with shared prefixes
@@ -473,6 +562,7 @@ This primes the KV caches with the system prompt across llm-d's routing decision
 
 Run the same benchmark you performed in Modules 2 and 3, now against llm-d:
 
+[.console-input]
 [source,bash]
 ----
 # Get llm-d URL
@@ -573,6 +663,7 @@ Mixed workloads with some shared prefixes:
 
 Compare your results across all three configurations:
 
+[.console-input]
 [source,text]
 ----
 === Your Results Summary ===

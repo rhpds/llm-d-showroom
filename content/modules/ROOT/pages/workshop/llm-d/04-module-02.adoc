@@ -475,7 +475,14 @@ spec:
         - name: results
           emptyDir: {}
 EOF
+----
 
+Check the logs of the Job to monitor progress:
+
+[.console-input]
+[source,bash]
+----
+# Follow the Job logs
 oc wait --for=jsonpath='{.status.ready}'=1 job/guidellm-vllm-single-sweep
 oc logs -f job/guidellm-vllm-single-sweep
 ----

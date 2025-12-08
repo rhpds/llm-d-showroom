@@ -7,13 +7,50 @@ toc::[]
 
 Welcome to the llm-d workshop! In the next 2 hours, you'll gain hands-on experience with production-ready distributed LLM inference that dramatically improves tail latency—the experience your most frustrated users see.
 
-== What you'll learn
+== Prerequisites
 
-This workshop teaches you how to reduce P95 and P99 latency using llm-d—an intelligent orchestration layer that sits above vLLM and routes requests based on KV cache awareness.
+This workshop assumes you already have:
 
-You'll work through a realistic business scenario as a Platform Engineer at ParasolCloud, tasked with improving customer experience for an AI-powered support platform. While naive scaling adds capacity, it doesn't solve the real problem: unpredictable, high tail latencies that frustrate users during peak periods.
+* **Experience with vLLM** - You understand how to deploy models and basic inference concepts
+* **LLM inference knowledge** - Familiar with metrics like TTFT, ITL, throughput, and KV cache
+* **Kubernetes/OpenShift skills** - Can work with kubectl/oc CLI, understand pods and services
+* **KServe familiarity** - Know what InferenceServices and ServingRuntimes are
+* **Grafana basics** - Can read dashboards and understand time-series metrics
 
-**Your goal**: Evaluate whether llm-d can deliver consistent, low-latency responses—especially for the users currently experiencing the worst performance (P95/P99).
+**What we WON'T cover**:
+
+* Transformer architecture fundamentals
+* How vLLM works internally
+* Kubernetes basics
+* Introduction to LLM serving
+
+This workshop focuses on **distributed inference optimization**, not foundational concepts.
+
+== Your ParasolCloud scenario
+
+Throughout the workshop, you'll work on a realistic business problem:
+
+**The Challenge**: ParasolCloud's AI-powered customer service platform needs to scale significantly for a major client expansion launching in 90 days.
+
+**Current State**:
+
+* Monolith vLLM deployment
+* Limited request capacity
+* Customer service chatbot with system prompt shared across queries
+
+**Your Task**:
+
+* Evaluate scaling options
+* Benchmark naive scaling (more GPUs with round-robin load balancing)
+* Test llm-d with intelligent cache-aware routing
+* Provide recommendation with quantified ROI
+
+**Success Criteria**:
+
+* Achieve required throughput for client expansion
+* Minimize GPU investment
+* Improve latency for better customer experience
+* Deploy within 90-day timeline
 
 == Understanding tail latency: P95 and P99
 
@@ -35,12 +72,15 @@ Before diving into the workshop, let's understand what P95 and P99 latency mean 
 **Why P95 and P99 matter more than average:**
 
 Think about a customer service chatbot with these metrics:
+
 * Average latency: 200ms (looks great!)
 * P50 latency: 180ms (most users happy)
 * P95 latency: 1200ms (5% of users wait over a second)
 * P99 latency: 2500ms (1% of users wait over 2 seconds!)
 
-Your "average" looks excellent, but **5-10% of your customers are having a terrible experience**. These are often your most important users:
+Your "average" looks excellent, but **5-10% of your customers are having a terrible experience**.
+
+These are often your most important users:
 
 * Users during peak traffic periods
 * Users with complex multi-turn conversations
@@ -49,11 +89,18 @@ Your "average" looks excellent, but **5-10% of your customers are having a terri
 **Tail latency = "What your most frustrated users see"**
 
 In production systems, tail latency directly impacts:
+
 * **Customer satisfaction**: Frustrated users file support tickets or churn
 * **Business metrics**: Slow responses reduce conversion rates and engagement
 * **Service Level Objectives (SLOs)**: P95/P99 targets are critical for production readiness
 
 **This workshop focuses on reducing tail latency** because adding more GPUs improves capacity (throughput) but doesn't necessarily make your worst-case users any happier. You'll learn how intelligent routing can dramatically reduce P95 and P99 latency without adding hardware.
+
+== What you'll learn and demonstrate
+
+This workshop teaches you how to reduce P95 and P99 latency using llm-d—an intelligent orchestration layer that sits above vLLM and routes requests based on KV cache awareness.
+
+**Your goal**: Evaluate whether llm-d can deliver consistent, low-latency responses—especially for the users currently experiencing the worst performance (P95/P99).
 
 === Hands-on skills you'll gain
 
@@ -67,6 +114,16 @@ By the end of this workshop, you'll be able to:
 * **Quantify customer experience improvements** - connect P95/P99 reductions to user satisfaction
 * **Articulate value** in terms users understand: "faster responses for your most frustrated customers"
 
+=== What you'll have accomplished
+
+By the end of this workshop, you'll have:
+
+* **Deployed three configurations** and collected real tail latency data
+* **Compared P95/P99 latency** across single GPU, naive multi-GPU scaling, and llm-d orchestration
+* **Tested multiple scenarios** - single-turn large prompts and multi-turn chat conversations
+* **Measured the user experience impact** - how much faster are responses for your most frustrated users?
+* **Built a recommendation** focusing on customer satisfaction improvements, not just technical metrics
+
 === What makes this workshop different
 
 This is NOT a lecture-heavy introduction to distributed systems. You'll spend:
@@ -78,11 +135,12 @@ You'll generate real performance data, make architectural decisions based on ben
 
 == Workshop modules
 
+**Total duration**: 105 minutes (~2 hours)
+
 === Module 1: Introduction & Core Concepts (20 minutes)
 
 Understand what causes tail latency and how to fix it:
 
-* **Tail latency explained**: What P95/P99 means and why it matters ("your most frustrated users")
 * **Latency bottlenecks**: Prefill queuing, KV cache misses, multi-turn chat inefficiency
 * **LLM inference phases**: Prefill vs. decode and their different latency characteristics
 * **KV cache sharing**: Why cache hits eliminate queuing and reduce P95
@@ -124,58 +182,21 @@ Fix tail latency with intelligent cache-aware routing:
 
 **Outcome**: Demonstrable proof that intelligent routing reduces tail latency for shared-prefix workloads.
 
+== What success looks like
 
-== What you'll demonstrate
+By the end of the workshop, you'll have:
 
-By the end of this workshop, you'll have:
+✓ **Deployed three configurations** - single GPU, 4 GPU naive scaling, 4 GPU with llm-d
 
-* **Deployed three configurations** and collected real tail latency data
-* **Compared P95/P99 latency** across single GPU, naive multi-GPU scaling, and llm-d orchestration
-* **Tested multiple scenarios** - single-turn large prompts and multi-turn chat conversations
-* **Measured the user experience impact** - how much faster are responses for your most frustrated users?
-* **Built a recommendation** focusing on customer satisfaction improvements, not just technical metrics
+✓ **Generated real benchmark data** - P50/P95/P99 latency, cache hit rates
 
-== Prerequisites
+✓ **Demonstrated the critical insight** - More GPUs ≠ Better P95/P99
 
-This workshop assumes you already have:
+✓ **Measured P95/P99 latency improvements** with llm-d compared to naive scaling
 
-* **Experience with vLLM** - You understand how to deploy models and basic inference concepts
-* **LLM inference knowledge** - Familiar with metrics like TTFT, ITL, throughput, and KV cache
-* **Kubernetes/OpenShift skills** - Can work with kubectl/oc CLI, understand pods and services
-* **KServe familiarity** - Know what InferenceServices and ServingRuntimes are
-* **Grafana basics** - Can read dashboards and understand time-series metrics
+✓ **Understanding when llm-d helps** - Shared prefixes and multi-turn conversations
 
-**What we WON'T cover**:
-
-* Transformer architecture fundamentals
-* How vLLM works internally
-* Kubernetes basics
-* Introduction to LLM serving
-
-This workshop focuses on **distributed inference optimization**, not foundational concepts.
-
-== Your ParasolCloud scenario
-
-Throughout the workshop, you'll work on a realistic business problem:
-
-**The Challenge**: ParasolCloud's AI-powered customer service platform needs to scale significantly for a major client expansion launching in 90 days.
-
-**Current State**:
-* Monolith vLLM deployment
-* Limited request capacity
-* Customer service chatbot with system prompt shared across queries
-
-**Your Task**:
-* Evaluate scaling options
-* Benchmark naive scaling (more GPUs with round-robin load balancing)
-* Test llm-d with intelligent cache-aware routing
-* Provide recommendation with quantified ROI
-
-**Success Criteria**:
-* Achieve required throughput for client expansion
-* Minimize GPU investment
-* Improve latency for better customer experience
-* Deploy within 90-day timeline
+**Most importantly**: You'll understand that llm-d's value is in **making your most frustrated customers happy** through tail latency reduction.
 
 == Common questions before you start
 
@@ -190,6 +211,7 @@ Ask for help! The instructor and other participants are resources. Each module a
 **"Can I use what I learn here in production?"**
 
 Absolutely. llm-d is production-ready, and you'll leave with:
+
 * Deployment patterns and configurations
 * Benchmark methodologies
 * Monitoring and observability setup
@@ -206,34 +228,14 @@ We balance technical depth with business clarity. You'll calculate GPU cost savi
 **"What happens after the workshop?"**
 
 Module 5 provides:
+
 * Links to llm-d documentation and community resources
 * Next steps for production adoption (staging deployment, gradual rollout)
 * Advanced topics (prefill/decode disaggregation, MoE models)
 * Contact information for ongoing support
 
-== Workshop structure and timing
-
-**Total duration**: 105 minutes (~2 hours)
-
-* Module 1: Introduction & Core Concepts - 20 minutes
-* Module 2: Deploy Model with vLLM & Benchmark - 25 minutes
-* Module 3: Scale vLLM & Compare Performance - 25 minutes
-* Module 4: Deploy llm-d & Benchmark - 35 minutes
-
-== What success looks like
-
-By the end of the workshop, you'll have:
-
-✓ **Deployed three configurations** - single GPU, 4 GPU naive scaling, 4 GPU with llm-d
-✓ **Generated real benchmark data** - P50/P95/P99 latency, cache hit rates
-✓ **Demonstrated the critical insight** - More GPUs ≠ Better P95/P99
-✓ **Measured P95/P99 latency improvements** with llm-d compared to naive scaling
-✓ **Understanding when llm-d helps** - Shared prefixes and multi-turn conversations
-
-**Most importantly**: You'll understand that llm-d's value is in **making your most frustrated customers happy** through tail latency reduction.
-
 == Ready to begin?
 
-Let's start by understanding your role and task. Navigate to the **Overview** section to learn about ParasolCloud's scaling challenge.
+Now that you understand the prerequisites, the ParasolCloud scenario you'll be working on, and what you'll accomplish, you're ready to start!
 
-Then dive into **Module 1** to build the conceptual foundation for distributed inference optimization.
+Navigate to **Module 1** to build the conceptual foundation for distributed inference optimization, then move on to the hands-on deployment and benchmarking exercises.

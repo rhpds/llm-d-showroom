@@ -136,14 +136,17 @@ Watch the InferenceService status:
 [.console-input]
 [source,bash]
 ----
-# Watch InferenceService status, use Ctrl+C to cancel when it shows ready
-oc get inferenceservice llama-vllm-scaled -w
+# Check all pods (should see 4 replicas)
+oc get pods -l serving.kserve.io/inferenceservice=llama-vllm-scaled -w
 ----
 
-Example output:
+And check logs to see when each replica is ready:
 
-[.console-output]
+[.console-input]
 [source,bash]
+----
+# Check logs from all replicas
+oc logs -l serving.kserve.io/inferenceservice=llama-vllm-scaled --all-containers -f
 ----
 NAME                URL                                                                                        READY   PREV   LATEST   PREVROLLEDOUTREVISION   LATESTREADYREVISION   AGE
 llama-vllm-scaled   https://llama-vllm-scaled-llm-d-project.apps.cluster-6slff.6slff.sandbox5571.opentlc.com   False                                                                 5s
@@ -186,56 +189,35 @@ Then, check the endpoint to make sure it's behaving:
 # Get the inference URL from the InferenceService
 INFERENCE_URL=$(oc get inferenceservice llama-vllm-scaled -o jsonpath='{.status.url}')
 # Test the endpoint
-curl ${INFERENCE_URL}/v1/models | jq .
+curl -k ${INFERENCE_URL}/v1/models | jq
 ----
 
-[.console-output]
+The endpoint should respond with model information. 
+
+Let's send one simple inference request before we move forward:
+
+[.console-input]
 [source,bash]
 ----
-  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
-                                 Dload  Upload   Total   Spent    Left  Speed
-  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0Handling connection for 8080
-100   479  100   479    0     0  47900      0 --:--:-- --:--:-- --:--:-- 47900
-{
-  "object": "list",
-  "data": [
-    {
-      "id": "llama-vllm-scaled",
-      "object": "model",
-      "created": 1765039812,
-      "owned_by": "vllm",
-      "root": "/mnt/models",
-      "parent": null,
-      "max_model_len": 65536,
-      "permission": [
-        {
-          "id": "modelperm-071430e45db64579ae4e02ccfc53cbe7",
-          "object": "model_permission",
-          "created": 1765039812,
-          "allow_create_engine": false,
-          "allow_sampling": true,
-          "allow_logprobs": true,
-          "allow_search_indices": false,
-          "allow_view": true,
-          "allow_fine_tuning": false,
-          "organization": "*",
-          "group": null,
-          "is_blocking": false
-        }
-      ]
-    }
-  ]
-}
+# Send a test request to the model
+curl ${INFERENCE_URL}/v1/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llama-vllm-scaled",
+    "prompt": "San Francisco is a",
+    "max_tokens": 50,
+    "temperature": 0.7
+  }' | jq .
 ----
 
-The endpoint should respond with model information. With 4 replicas, KServe will automatically load balance requests in a random fashion across all instances.
+With 4 replicas, OpenShift will automatically load balance requests in a round-robin fashion across all instances.
 
 === Understanding the naive load balancing
 
 With this deployment:
 
-* **KServe automatically load balances** requests across all 4 replicas
-* **No session affinity**: Each request can go to any replica
+* **OpenShift automatically load balances** requests across all 4 replicas
+* **No session affinity**: Each request can go to any replica (round-robin)
 * **Isolated KV caches**: Each replica maintains its own separate cache
 * **No cache coordination**: Replicas don't share cache information
 
@@ -307,10 +289,22 @@ INFERENCE_URL=$(oc get inferenceservice llama-vllm-scaled -o jsonpath='{.status.
 
 # Run baseline benchmark with sweep profile
 cat << EOF | oc apply -f-
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: guidellm-vllm-scaled-sweep-results
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  volumeMode: Filesystem
+---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: custom-benchmark-vllm-scaled
+  name: guidellm-vllm-scaled-sweep
 spec:
   backoffLimit: 4
   template:
@@ -318,21 +312,40 @@ spec:
       serviceAccountName: default
       restartPolicy: Never
       containers:
-        - name: benchmark
-          image: quay.io/jharmison/multi-turn-benchmark:v0.0.2-test
+        - name: guidellm
+          image: ghcr.io/vllm-project/guidellm:v0.4.0
+          imagePullPolicy: IfNotPresent
+          command:
+            - /opt/app-root/bin/guidellm
           args:
-            - ${INFERENCE_URL}/v1
-            - --parallel=9
+            - benchmark
+            - run
+            - --target=${INFERENCE_URL}
+            - --profile=sweep
+            - --max-seconds=60
+            - --processor=RedHatAI/Meta-Llama-3.1-8B-Instruct-FP8-dynamic
+            - --data=prompt_tokens=256,output_tokens=128
+          volumeMounts:
+            - name: home
+              mountPath: /home/guidellm
+            - name: results
+              mountPath: /results
+      volumes:
+        - name: home
+          emptyDir: {}
+        - name: results
+          persistentVolumeClaim:
+            claimName: guidellm-vllm-scaled-sweep-results
 EOF
-
-oc wait --for=jsonpath='{.status.ready}'=1 job/custom-benchmark-vllm-scaled
-oc logs -f job/custom-benchmark-vllm-scaled
 ----
 
-Example output (to start):
+Check the logs of the Job to monitor progress:
 
-[.console-output]
+[.console-input]
 [source,bash]
+----
+# Follow the Job logs
+oc logs -f job/guidellm-vllm-scaled-sweep
 ----
 job.batch/custom-benchmark-vllm-scaled created
 job.batch/custom-benchmark-vllm-scaled condition met
@@ -453,6 +466,7 @@ This time, the benchmark should only take around 5-6 minutes to run, because we'
 
 When the benchmark finishes, create a comparison of your results:
 
+[.console-input]
 [source,text]
 ----
 === Tail Latency Comparison: 1 GPU vs. 4 GPUs ===
@@ -467,6 +481,20 @@ Improvement: _______ %
 ----
 
 === The fundamental problem
+
+**Capacity vs. Latency**:
+
+* Capacity (throughput): 4 GPUs = ~4x improvement ✅
+* Tail latency (P95/P99): 4 GPUs = minimal or NO improvement ❌
+
+**Why tail latency doesn't improve**:
+
+* Every request may recompute shared prefixes (cache miss)
+* Multi-turn conversations spread across replicas (no cache reuse)
+* Round-robin routing ignores cache state (random placement)
+* 4 isolated caches = wasted prefill computation
+
+**ParasolCloud's Challenge**:
 
 **ParasolCloud's Challenge**:
 
@@ -522,7 +550,7 @@ Turn 3: Growing context...
 
 **The Solution Needed:**
 
-Intelligent cache-aware routing that:
+**Intelligent cache-aware routing** that:
 
 * Routes similar requests to same replica (cache hits)
 * Routes conversation turns to same replica (context reuse)
@@ -533,15 +561,34 @@ Intelligent cache-aware routing that:
 
 **What you accomplished:**
 
-* Scaled vLLM deployment from 1 to 4 GPUs with random load balancing
+* Scaled vLLM deployment from 1 to 4 GPUs with round-robin load balancing
 * Ran benchmarks to compare tail latency with more GPUs
 * Demonstrated the critical insight: **More GPUs ≠ perfect P95/P99 latency**
 
 **Key takeaways:**
 
-* **Capacity vs. Latency**: 4 GPUs increase throughput (capacity)
-* **TTFT still not a good user experience**: We're recomputing a lot of prefill every time
-* **Critical insight**: Round-robin/random load balancing + isolated caches = persistent tail latency problems
+* **Capacity vs. Latency**: 4 GPUs increase throughput (capacity) but don't reduce tail latency
+* **P95/P99 barely improves**: Compare your results - you should see minimal improvement
+* **Critical insight**: Round-robin routing + isolated caches = persistent tail latency problems
+
+**The fundamental problem:**
+
+* 4 vLLM replicas = 4 isolated KV caches
+* Round-robin routing spreads requests randomly (ignores cache state)
+* Shared prefixes recomputed on every replica (cache misses)
+* Multi-turn conversations recompute entire history on each turn
+* **Your most frustrated users (P95/P99) see no improvement**
+
+**ParasolCloud's reality:**
+
+* ✅ Capacity increased with more GPUs
+* ❌ Customer complaints continue: P95 latency not significantly improved
+* ❌ Most frustrated users: Still experiencing slow responses
+
+**The critical distinction:**
+
+* **Scaling for capacity**: Add more GPUs → More requests/second ✅
+* **Scaling for latency**: Need intelligent routing → Faster responses for worst-case users ❌
 
 **The question:**
 
