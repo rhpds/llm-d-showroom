@@ -379,6 +379,11 @@ Check the logs of the Job to monitor progress:
 # Follow the Job logs
 oc logs -f job/guidellm-vllm-scaled-sweep
 ----
+
+Example output (to start):
+
+[.console-output]
+----
 job.batch/custom-benchmark-vllm-scaled created
 job.batch/custom-benchmark-vllm-scaled condition met
 ================================================================================
