@@ -132,8 +132,6 @@ metadata:
     serving.kserve.io/deploymentMode: RawDeployment
     opendatahub.io/hardware-profile-name: accelerated-profile
     opendatahub.io/hardware-profile-namespace: redhat-ods-applications
-  labels:
-    networking.kserve.io/visibility: exposed
 spec:
   predictor:
     automountServiceAccountToken: false
@@ -191,9 +189,9 @@ Example output:
 [.console-output]
 [source,bash]
 ----
-NAME                URL                                                                                        READY   PREV   LATEST   PREVROLLEDOUTREVISION   LATESTREADYREVISION   AGE
-llama-vllm-single   https://llama-vllm-single-llm-d-project.apps.cluster-fnj7b.fnj7b.sandbox5571.opentlc.com   False                                                                 4s
-llama-vllm-single   https://llama-vllm-single-llm-d-project.apps.cluster-fnj7b.fnj7b.sandbox5571.opentlc.com   True                                                                  98s
+NAME                URL                                                                      READY   PREV   LATEST   PREVROLLEDOUTREVISION   LATESTREADYREVISION   AGE
+llama-vllm-single   http://llama-vllm-single-svc-predictor.llm-d-project.svc.cluster.local   False                                                                 4s
+llama-vllm-single   http://llama-vllm-single-svc-predictor.llm-d-project.svc.cluster.local   True                                                                  98s
 ----
 
 The deployment will progress to `READY` being `True` after the model is loaded. You can press `Ctrl+C` to cancel once it does.
@@ -201,21 +199,26 @@ The model and serving runtime should already have been downloaded to your node, 
 
 === Test the deployment
 
-It's time to make sure your model behaves as expected. First, recover the URL:
+It's time to make sure your model behaves as expected. First, port-forward to the instance:
 
 [.console-input]
 [source,bash]
 ----
-# Get the inference URL
-INFERENCE_URL=$(oc get inferenceservice llama-vllm-single -o jsonpath='{.status.url}')
-echo $INFERENCE_URL
+# Port forward to the pod
+oc port-forward deployment/llama-vllm-single-predictor 8080:8080 &
 ----
 
 Example output:
+
 [.console-output]
 [source,bash]
 ----
-https://llama-vllm-single-llm-d-project.apps.cluster-fnj7b.fnj7b.sandbox5571.opentlc.com
+[1] 52333
+[lab-user@bastion ~]$ Forwarding from 127.0.0.1:8080 -> 8080
+Forwarding from [::1]:8080 -> 8080
+
+[lab-user@bastion ~]$
+[lab-user@bastion ~]$
 ----
 
 Then, make sure the models endpoint returns the model name we expect:
@@ -224,7 +227,7 @@ Then, make sure the models endpoint returns the model name we expect:
 [source,bash]
 ----
 # Check the list of models to confirm the model name is llama-vllm-single, matching the InferenceService
-curl ${INFERENCE_URL}/v1/models | jq .
+curl http://localhost:8080/v1/models | jq .
 ----
 
 Example output:
@@ -273,7 +276,7 @@ Now, make sure the model is able to perform inference at one of the OpenAI-compa
 [source,bash]
 ----
 # Send a test request to the model
-curl ${INFERENCE_URL}/v1/completions \
+curl http://localhost:8080/v1/completions \
   -H "Content-Type: application/json" \
   -d '{
     "model": "llama-vllm-single",
@@ -336,29 +339,6 @@ vLLM exposes Prometheus metrics on its metrics port. Verify the service is expos
 [.console-input]
 [source,bash]
 ----
-# Port forward to the metrics endpoint
-oc port-forward deployment/llama-vllm-single-predictor 8080:8080
-----
-
-Example output:
-
-[.console-output]
-[source,bash]
-----
-pod/llama-vllm-single-predictor-7b979bbf9c-2ttdv
-[1] 52333
-[lab-user@bastion ~]$ Forwarding from 127.0.0.1:8080 -> 8080
-Forwarding from [::1]:8080 -> 8080
-
-[lab-user@bastion ~]$
-[lab-user@bastion ~]$
-----
-
-Then, get the metrics:
-
-[.console-input]
-[source,bash]
-----
 # Fetch metrics
 curl http://localhost:8080/metrics | grep vllm | head -40
 ----
@@ -382,7 +362,7 @@ Expected output:
 [.console-output]
 [source,bash]
 ----
-[1]+  Terminated              oc port-forward ${POD_NAME} 8080:8080
+[1]+  Terminated              oc port-forward deployment/llama-vllm-single-predictor 8080:8080
 ----
 
 === Verify ServiceMonitor configuration
@@ -436,8 +416,6 @@ Run a benchmark to establish your single-GPU baseline performance:
 [.console-input]
 [source,bash]
 ----
-# Get the inference URL again, in case your terminal disconnected
-INFERENCE_URL=$(oc get inferenceservice llama-vllm-single -o jsonpath='{.status.url}')
 # Run baseline benchmark with sweep profile
 cat << EOF | oc apply -f-
 apiVersion: batch/v1
@@ -459,7 +437,7 @@ spec:
           args:
             - benchmark
             - run
-            - --target=${INFERENCE_URL}
+            - --target=http://llama-vllm-single-svc-predictor:8080
             - --profile=sweep
             - --max-seconds=60
             - --processor=RedHatAI/Meta-Llama-3.1-8B-Instruct-FP8-dynamic
@@ -593,8 +571,6 @@ Run a benchmark to establish your single-GPU baseline performance for our secnar
 [.console-input]
 [source,bash]
 ----
-# Get the inference URL again, just in case
-INFERENCE_URL=$(oc get inferenceservice llama-vllm-single -o jsonpath='{.status.url}')
 # Create the benchmark job
 cat << EOF | oc apply -f-
 apiVersion: batch/v1
@@ -609,9 +585,9 @@ spec:
       restartPolicy: Never
       containers:
         - name: benchmark
-          image: quay.io/jharmison/multi-turn-benchmark:v0.0.2-test
+          image: quay.io/hayesphilip/multi-turn-benchmark:0.0.1
           args:
-            - ${INFERENCE_URL}/v1
+            - http://llama-vllm-single-svc-predictor:8080/v1
             - --parallel=9
 EOF
 
@@ -629,7 +605,7 @@ job.batch/custom-benchmark-vllm-single condition met
 ================================================================================
 Multi-Turn Conversation Benchmark (Seed Documents)
 ================================================================================
-Target URL: https://llama-vllm-single-llm-d-project.apps.cluster-6slff.6slff.sandbox5571.opentlc.com/v1
+Target URL: https://llama-vllm-single-svc-predictor:8080/v1
 Seed documents directory: /opt/app-root/src/seed-documents
 Conversations: 11
 Turns per conversation: 10
@@ -749,9 +725,9 @@ Let's move on to the next module, where we'll look at deploying four naive vLLM 
 **Key takeaways:**
 
 * Single GPU has limited capacity before latency degrades
-* Tail latency (P95/P99) degrades significantly when approaching saturation
+* Tail latency (P95) degrades significantly when approaching saturation
 * vLLM metrics in Grafana provide real-time performance visibility
-* Your most frustrated users (P95/P99) experience significantly higher latency than mean
+* Your most frustrated users (P95) experience significantly higher latency than mean
 
 **ParasolCloud's baseline:**
 
