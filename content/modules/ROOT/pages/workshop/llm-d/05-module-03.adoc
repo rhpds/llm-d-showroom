@@ -140,18 +140,50 @@ Watch the InferenceService status:
 oc get pods -l serving.kserve.io/inferenceservice=llama-vllm-scaled -w
 ----
 
-And check logs to see when each replica is ready:
+Example output:
 
-[.console-input]
+[.console-output]
 [source,bash]
 ----
-# Check logs from all replicas
-oc logs -l serving.kserve.io/inferenceservice=llama-vllm-scaled --all-containers -f
+NAME                                          READY   STATUS            RESTARTS   AGE
+llama-vllm-scaled-predictor-78667f5b9-fg6xj   0/2     PodInitializing   0          9s
+llama-vllm-scaled-predictor-78667f5b9-fg6xj   1/2     Running           0          9s
+llama-vllm-scaled-predictor-78667f5b9-z5nbt   0/2     Pending           0          0s
+llama-vllm-scaled-predictor-78667f5b9-z5nbt   0/2     Pending           0          0s
+llama-vllm-scaled-predictor-78667f5b9-z5nbt   0/2     Pending           0          0s
+llama-vllm-scaled-predictor-78667f5b9-mgp7n   0/2     Pending           0          0s
+llama-vllm-scaled-predictor-78667f5b9-6gpzz   0/2     Pending           0          0s
+llama-vllm-scaled-predictor-78667f5b9-mgp7n   0/2     Pending           0          0s
+llama-vllm-scaled-predictor-78667f5b9-6gpzz   0/2     Pending           0          0s
+llama-vllm-scaled-predictor-78667f5b9-mgp7n   0/2     Pending           0          0s
+llama-vllm-scaled-predictor-78667f5b9-6gpzz   0/2     Pending           0          0s
+llama-vllm-scaled-predictor-78667f5b9-z5nbt   0/2     Init:0/1          0          0s
+llama-vllm-scaled-predictor-78667f5b9-mgp7n   0/2     Init:0/1          0          0s
+llama-vllm-scaled-predictor-78667f5b9-6gpzz   0/2     Init:0/1          0          0s
+llama-vllm-scaled-predictor-78667f5b9-z5nbt   0/2     Init:0/1          0          1s
+llama-vllm-scaled-predictor-78667f5b9-6gpzz   0/2     Init:0/1          0          1s
+llama-vllm-scaled-predictor-78667f5b9-mgp7n   0/2     Init:0/1          0          1s
+llama-vllm-scaled-predictor-78667f5b9-z5nbt   0/2     Init:0/1          0          3s
+llama-vllm-scaled-predictor-78667f5b9-mgp7n   0/2     Init:0/1          0          3s
+llama-vllm-scaled-predictor-78667f5b9-6gpzz   0/2     Init:0/1          0          4s
+llama-vllm-scaled-predictor-78667f5b9-z5nbt   0/2     PodInitializing   0          4s
+llama-vllm-scaled-predictor-78667f5b9-6gpzz   0/2     PodInitializing   0          5s
+llama-vllm-scaled-predictor-78667f5b9-mgp7n   0/2     PodInitializing   0          6s
+llama-vllm-scaled-predictor-78667f5b9-z5nbt   1/2     Running           0          9s
+llama-vllm-scaled-predictor-78667f5b9-mgp7n   1/2     Running           0          11s
+llama-vllm-scaled-predictor-78667f5b9-6gpzz   1/2     Running           0          11s
+llama-vllm-scaled-predictor-78667f5b9-fg6xj   2/2     Running           0          103s
+llama-vllm-scaled-predictor-78667f5b9-z5nbt   2/2     Running           0          100s
+llama-vllm-scaled-predictor-78667f5b9-mgp7n   2/2     Running           0          102s
+llama-vllm-scaled-predictor-78667f5b9-6gpzz   2/2     Running           0          104s
 ----
-NAME                URL                                                                                        READY   PREV   LATEST   PREVROLLEDOUTREVISION   LATESTREADYREVISION   AGE
-llama-vllm-scaled   https://llama-vllm-scaled-llm-d-project.apps.cluster-6slff.6slff.sandbox5571.opentlc.com   False                                                                 5s
-llama-vllm-scaled   https://llama-vllm-scaled-llm-d-project.apps.cluster-6slff.6slff.sandbox5571.opentlc.com   False                                                                 15s
-llama-vllm-scaled   https://llama-vllm-scaled-llm-d-project.apps.cluster-6slff.6slff.sandbox5571.opentlc.com   True                                                                  117s
+
+You can also check the logs to see vLLM come ready to serve:
+
+[.console-output]
+[shell,bash]
+----
+oc logs -l serving.kserve.io/inferenceservice=llama-vllm-scaled --all-containers -f
 ----
 
 The deployment will progress to `READY` being `True` after the model is loaded. You can press `Ctrl+C` to cancel once it does.
@@ -192,7 +224,7 @@ INFERENCE_URL=$(oc get inferenceservice llama-vllm-scaled -o jsonpath='{.status.
 curl -k ${INFERENCE_URL}/v1/models | jq
 ----
 
-The endpoint should respond with model information. 
+The endpoint should respond with model information.
 
 Let's send one simple inference request before we move forward:
 
@@ -346,6 +378,11 @@ Check the logs of the Job to monitor progress:
 ----
 # Follow the Job logs
 oc logs -f job/guidellm-vllm-scaled-sweep
+----
+
+Example output (to start):
+
+[.console-output]
 ----
 job.batch/custom-benchmark-vllm-scaled created
 job.batch/custom-benchmark-vllm-scaled condition met
