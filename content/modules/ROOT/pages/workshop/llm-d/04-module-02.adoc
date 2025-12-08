@@ -213,7 +213,6 @@ Example output:
 [.console-output]
 [source,bash]
 ----
-pod/llama-vllm-single-predictor-7b979bbf9c-2ttdv
 [1] 52333
 [lab-user@bastion ~]$ Forwarding from 127.0.0.1:8080 -> 8080
 Forwarding from [::1]:8080 -> 8080
@@ -726,9 +725,9 @@ Let's move on to the next module, where we'll look at deploying four naive vLLM 
 **Key takeaways:**
 
 * Single GPU has limited capacity before latency degrades
-* Tail latency (P95/P99) degrades significantly when approaching saturation
+* Tail latency (P95) degrades significantly when approaching saturation
 * vLLM metrics in Grafana provide real-time performance visibility
-* Your most frustrated users (P95/P99) experience significantly higher latency than mean
+* Your most frustrated users (P95) experience significantly higher latency than mean
 
 **ParasolCloud's baseline:**
 
