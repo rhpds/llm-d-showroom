@@ -183,7 +183,7 @@ spec:
           - name: tokenizer-cache
             emptyDir: {}
           - name: cachi2-cache
-            emptyDir: {} 
+            emptyDir: {}
     route: {}
     gateway: {}
   template:
@@ -388,7 +388,7 @@ cat << EOF | oc apply -f-
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: custom-benchmark-vllm-scaled
+  name: custom-benchmark-llm-d
 spec:
   backoffLimit: 4
   template:
@@ -416,7 +416,7 @@ While this runs, observe the Grafana dashboard.
 
 === Compare results
 
-As our turns start, the KV cache hit rate looks as bad as the benchmark we perfored against scaled vllm as none of our conversations have been seen before.
+As our turns start, the KV cache hit rate looks as bad as the benchmark we performed against scaled vLLM as none of our conversations have been seen before.
 But this time, the KV Cache hit rate gets steadily higher, up to 90%, demonstrating much improved cache hit rate.
 We can also see the TTFT metrics are are a lot smoother with fewer spikes.
 Overall, the results in Grafana look a lot smoother and more balanced.
@@ -475,7 +475,7 @@ First Turn vs Subsequent Turns (Prefix Caching Indicator):
 
 ================================================================================
 
----
+----
 
 When the benchmark finishes, create a comparison of your results:
 
@@ -496,6 +496,7 @@ Improvement: _______ %
 What difference are you seeing between the two runs?
 
 **Why llm-d works**:
+
 * llm-d routes requests with similar prefixes to the same backend
 * Cache hits eliminate redundant prefill computation
 * P95/P99 users benefit from cached prefill
@@ -506,12 +507,14 @@ What difference are you seeing between the two runs?
 == Module 4 summary
 
 **What you accomplished:**
+
 * Deployed llm-d orchestrator with Prefix Cache Aware Routing
 * Configured llm-d to intelligently manage 4 vLLM backend instances
 * Ran benchmarks demonstrating tail latency improvements with cache-aware routing
 * Proved that intelligent routing solves the problem naive scaling couldn't
 
 **When llm-d provides value:**
+
 * Workloads with shared prefixes (system prompts, common contexts)
 * Multi-turn conversations requiring context reuse
 * Any scenario where cache misses cause high P95/P99 latency
