@@ -3,16 +3,15 @@
 :toc: macro
 :toclevels: 2
 
-You've proven that 4 GPUs with naive scaling don't significantly reduce P95/P99 tail latency—your most frustrated users still experience slow responses. Now it's time to deploy llm-d with Precise Prefix Cache Aware Routing to dramatically reduce tail latency through intelligent cache reuse.
+You've proven that 4 GPUs with naive scaling don't significantly reduce P95/P99 tail latency—your most frustrated users still experience slow responses. Now it's time to deploy llm-d with Prefix Cache Aware Routing to try and reduce tail latency through intelligent cache reuse.
 
-In this module, you'll deploy llm-d to orchestrate your 4 vLLM instances with cache-aware routing, run the same benchmarks, and measure the P95/P99 improvements.
+In this module, you'll deploy llm-d to orchestrate 4 vLLM instances with cache-aware routing, run the same benchmarks, and test for P95/P99 improvements.
 
 == Learning objectives
 By the end of this module, you'll be able to:
 
-* Deploy llm-d with Precise Prefix Cache Aware Routing configuration
-* Configure llm-d to orchestrate multiple vLLM backend instances
-* Set up llm-d Grafana dashboard to monitor cache hit rates
+* Deploy llm-d with Prefix Cache Aware Routing configuration
+* Use the Grafana dashboard to monitor cache hit rates
 * Execute benchmarks across both scenarios and measure P95/P99 latency reductions
 * Quantify customer experience improvements with real tail latency data
 
@@ -47,8 +46,6 @@ llm-d routing logic:
 5. Returns response to client
 ----
 
-**Key insight**: Your 4 vLLM instances keep running. llm-d sits in front as an intelligent reverse proxy.
-
 == Exercise 1: Deploy llm-d with LLMInferenceService
 
 === Clean up scaled-vLLM deployment
@@ -71,30 +68,16 @@ llm-d uses the **LLMInferenceService** custom resource to deploy an intelligent 
 
 * Deploys multiple vLLM inference pool replicas
 * Configures the llm-d router with intelligent scheduling plugins
-* Enables **precise-prefix-cache-scorer** for cache-aware routing
-
-=== Create HuggingFace token secret
-
-The LLMInferenceService needs access to HuggingFace to download the model and tokenizer. Create a secret with your HuggingFace token:
-
-[.console-input]
-[source,bash]
-----
-# Create secret with your HuggingFace token
-oc create secret generic hf-secret \
-  --from-literal=HF_TOKEN=your_hf_token_here
-----
-
-NOTE: If your workshop environment has pre-cached models, this step may be optional. Check with your instructor.
+* Enables **prefix-cache-scorer** for cache-aware routing
 
 === Create Gateway Object
 
-A GatewayClass and a Gateway for the inference service should be created.
+First of all a GatewayClass and a Gateway for the inference service should be created.
 
 [.console-input]
 [source,bash]
 ----
-cat > gateway.yaml << 'EOF'
+cat << 'EOF' | oc apply -f-
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: GatewayClass
@@ -106,43 +89,28 @@ spec:
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
-  labels:
-    istio.io/rev: openshift-gateway
   name: openshift-ai-inference
   namespace: openshift-ingress
 spec:
-  gatewayClassName: openshift-ai-inference
+  gatewayClassName: openshift-default
   listeners:
-    - allowedRoutes:
+    - name: http
+      port: 80
+      protocol: HTTP
+      allowedRoutes:
         namespaces:
-          from: Selector
-          selector:
-            matchExpressions:
-              - key: kubernetes.io/metadata.name
-                operator: In
-                values:
-                  - llm-d-project
-      hostname: inference-gateway.apps.{openshift_cluster_ingress_domain}
-      name: https
-      port: 443
-      protocol: HTTPS
-      tls:
-        certificateRefs:
-          - group: ''
-            kind: Secret
-            name: default-gateway-tls
-        mode: Terminate
+          from: All
 EOF
 ----
 
 === Create the LLMInferenceService
 
-Create the llm-d configuration with 4 replicas and precise-prefix-cache-aware routing:
+Create the llm-d configuration with 4 replicas and prefix-cache-aware routing:
 
 [.console-input]
 [source,bash]
 ----
-cat > llm-d-inference.yaml << 'EOF'
+cat << 'EOF' | oc apply -f-
 apiVersion: serving.kserve.io/v1alpha1
 kind: LLMInferenceService
 metadata:
@@ -151,12 +119,13 @@ metadata:
     opendatahub.io/model-type: generative
     openshift.io/display-name: llama-llm-d
     security.opendatahub.io/enable-auth: 'false'
-    serving.kserve.io/storageSecretName: hf-secret
+    prometheus.io/path: /metrics
+    prometheus.io/port: "8000"
 spec:
   replicas: 4
   model:
-    uri: hf://meta-llama/Meta-Llama-3.1-8B-Instruct
-    name: meta-llama/Meta-Llama-3.1-8B-Instruct
+    uri: oci://registry.redhat.io/rhelai1/modelcar-llama-3-1-8b-instruct-fp8-dynamic:1.5
+    name: llama-3-1-8b-instruct-fp8
   router:
     scheduler:
       template:
@@ -171,11 +140,6 @@ spec:
                 value: /tmp/tokenizer-cache
               - name: XDG_CACHE_HOME
                 value: /tmp
-              - name: HF_TOKEN
-                valueFrom:
-                  secretKeyRef:
-                    name: hf-secret
-                    key: HF_TOKEN
             args:
               - --pool-group
               - inference.networking.x-k8s.io
@@ -200,7 +164,7 @@ spec:
                 - type: single-profile-handler
                 - type: queue-scorer
                 - type: kv-cache-utilization-scorer
-                - type: precise-prefix-cache-scorer
+                - type: prefix-cache-scorer
                 schedulingProfiles:
                 - name: default
                   plugins:
@@ -208,13 +172,17 @@ spec:
                     weight: 2
                   - pluginRef: kv-cache-utilization-scorer
                     weight: 2
-                  - pluginRef: precise-prefix-cache-scorer
+                  - pluginRef: prefix-cache-scorer
                     weight: 3
             volumeMounts:
               - name: tokenizer-cache
-                mountPath: /tmp/
+                mountPath: /tmp/tokenizer-cache
+              - name: cachi2-cache
+                mountPath: /cachi2
         volumes:
           - name: tokenizer-cache
+            emptyDir: {}
+          - name: cachi2-cache
             emptyDir: {}
     route: {}
     gateway: {}
@@ -226,13 +194,8 @@ spec:
     containers:
       - name: main
         env:
-          - name: HF_TOKEN
-            valueFrom:
-              secretKeyRef:
-                name: hf-secret
-                key: HF_TOKEN
           - name: VLLM_ADDITIONAL_ARGS
-            value: "--disable-uvicorn-access-log --max-model-len=4096 --gpu-memory-utilization=0.9"
+            value: "--disable-uvicorn-access-log --max-model-len=16000"
         resources:
           limits:
             cpu: '1'
@@ -257,39 +220,11 @@ EOF
 **Key configuration elements**:
 
 * **`replicas: 4`**: Deploys 4 vLLM inference pool instances
-* **`serving.kserve.io/storageSecretName`**: Annotation that tells KServe to mount `hf-secret` into storage-initializer
-* **`containers[main].env.HF_TOKEN`**: Configures HuggingFace token for vLLM runtime and tokenizer access
-* **`precise-prefix-cache-scorer`**: The intelligent routing plugin (weight: 3)
+* **`model.uri`**: Uses OCI registry to pull the pre-packaged FP8 quantized model
+* **`prefix-cache-scorer`**: The intelligent routing plugin (weight: 3)
 * **`queue-scorer`**: Balances queue depth (weight: 2)
 * **`kv-cache-utilization-scorer`**: Optimizes cache memory usage (weight: 2)
 * **Plugin weights**: Higher weight = more influence on routing decisions
-
-=== Apply the LLMInferenceService
-
-[.console-input]
-[source,bash]
-----
-oc apply -f llm-d-inference.yaml
-----
-
-=== Verify HuggingFace token configuration
-
-Before the deployment completes, verify the HF_TOKEN is properly configured:
-
-[.console-input]
-[source,bash]
-----
-# Wait for the deployment to be created
-sleep 10
-
-# Check that storage-initializer has HF_TOKEN environment variable
-oc get deployment llama-llm-d-kserve -o jsonpath='{.spec.template.spec.initContainers[0].env[*].name}' | grep -q HF_TOKEN && echo "✓ HF_TOKEN configured in storage-initializer" || echo "✗ HF_TOKEN missing in storage-initializer"
-
-# Check that main container has HF_TOKEN environment variable
-oc get deployment llama-llm-d-kserve -o jsonpath='{.spec.template.spec.containers[0].env[*].name}' | grep -q HF_TOKEN && echo "✓ HF_TOKEN configured in main container" || echo "✗ HF_TOKEN missing in main container"
-----
-
-You should see both checks pass with ✓ marks.
 
 === Monitor deployment progress
 
@@ -311,27 +246,15 @@ The deployment will go through these states:
 2. **InProgress**: Router and inference pool pods deploying, models downloading
 3. **Ready**: All 4 inference pool instances ready, router active
 
-This can take 10-15 minutes as each instance downloads the model.
+This can take a few minutes as each instance pulls the model from the OCI registry.
 
 **What gets deployed**:
 
 * **1 Router pod**: The llm-d scheduler with precise-prefix-cache-aware routing
 * **4 Inference pool pods**: vLLM instances (1 per GPU) managed by llm-d
-* **Services and Routes**: Automatically created for external access
+* **Services **: Automatically created for access
 
-**Check storage-initializer logs** (optional):
-
-[.console-input]
-[source,bash]
-----
-# Get a pod name
-POD=$(oc get pods -l kserve.io/component=workload -o jsonpath='{.items[0].metadata.name}')
-
-# View storage-initializer logs
-oc logs $POD -c storage-initializer
-----
-
-You may see permission warnings like "Could not set the permissions on the file" - these are harmless and the download will continue successfully.
+image::llm-d-topology.png[]
 
 === Verify llm-d is running
 
@@ -345,76 +268,51 @@ LLMD_URL=$(oc get llminferenceservice llama-llm-d -o jsonpath='{.status.url}')
 echo "llm-d URL: ${LLMD_URL}"
 
 # Test with a simple request
-curl -k ${LLMD_URL}/v1/completions \
+curl ${LLMD_URL}/v1/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+    "model": "llama-3-1-8b-instruct-fp8",
     "prompt": "San Francisco is a",
-    "max_tokens": 20
-  }'
+    "max_tokens": 50,
+    "temperature": 0.7
+  }' | jq .
 ----
 
-Expected output: llm-d's router analyzes the prompt, routes to an inference pool instance based on cache state, and returns a completion.
+Expected output:
 
-=== Verify intelligent routing is active
-
-Check the router logs to see precise-prefix-cache-scorer in action:
-
-[.console-input]
+[.console-output]
 [source,bash]
 ----
-# Get router pod name
-ROUTER_POD=$(oc get pods -l app.kubernetes.io/component=llminferenceservice-router-scheduler -o jsonpath='{.items[0].metadata.name}')
-
-# View router logs showing routing decisions
-oc logs $ROUTER_POD --tail=50
-
-# You should see log lines indicating:
-# - Prefix similarity analysis
-# - Scoring plugin results (queue, kv-cache-utilization, precise-prefix-cache)
-# - Backend selection based on cache awareness
-----
-
-=== Troubleshooting
-
-**Issue**: LLMInferenceService stuck in "InProgress"
-**Solution**:
-
-[.console-input]
-[source,bash]
-----
-# Check LLMInferenceService status
-oc describe llminferenceservice llama-llm-d
-
-# Check router pod status
-oc get pods -l app.kubernetes.io/component=llminferenceservice-router-scheduler
-oc describe pod -l app.kubernetes.io/component=llminferenceservice-router-scheduler
-
-# Check inference pool pods
-oc get pods -l kserve.io/component=workload
-oc logs -l kserve.io/component=workload --tail=100
-
-# Common issues:
-# - GPU quota: Verify 4 GPUs available
-# - Image pull: Check image access and pull secrets
-# - Model download: Check HuggingFace access (may need HF_TOKEN)
-----
-
-**Issue**: Model download timeout
-
-**Solution**: If models are pre-cached on PVC, update the `uri`:
-
-[.console-input]
-[source,yaml]
-----
-spec:
-  model:
-    uri: pvc://model-cache/llama-3.1-8b
+{
+  "choices": [
+    {
+      "finish_reason": "length",
+      "index": 0,
+      "logprobs": null,
+      "prompt_logprobs": null,
+      "prompt_token_ids": null,
+      "stop_reason": null,
+      "text": " top tourist destination in the United States, attracting millions of visitors each year. From its iconic Golden Gate Bridge to its vibrant neighborhoods like Haight-Ashbury and Fisherman's Wharf, there's no shortage of things to see and do in this",
+      "token_ids": null
+    }
+  ],
+  "created": 1765225596,
+  "id": "cmpl-53eaaee5-9499-4343-a20e-d42776e3a49e",
+  "kv_transfer_params": null,
+  "model": "llama-3-1-8b-instruct-fp8",
+  "object": "text_completion",
+  "service_tier": null,
+  "system_fingerprint": null,
+  "usage": {
+    "completion_tokens": 50,
+    "prompt_tokens": 5,
+    "prompt_tokens_details": null,
+    "total_tokens": 55
+  }
+}
 ----
 
 == Exercise 2: Configure llm-d monitoring
-
-Set up comprehensive monitoring for llm-d router and inference pool metrics.
 
 === Create ServiceMonitor for llm-d router
 
@@ -423,11 +321,13 @@ Monitor the router's scheduling decisions and cache hit rates:
 [.console-input]
 [source,bash]
 ----
-cat > llm-d-router-servicemonitor.yaml << 'EOF'
+cat << 'EOF' | oc apply -f-
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   name: llm-d-router-metrics
+  labels:
+    monitoring.opendatahub.io/scrape: "true"
 spec:
   selector:
     matchLabels:
@@ -442,14 +342,6 @@ spec:
 EOF
 ----
 
-Apply the ServiceMonitor:
-
-[.console-input]
-[source,bash]
-----
-oc apply -f llm-d-router-servicemonitor.yaml
-----
-
 === Create ServiceMonitor for inference pools
 
 Monitor the vLLM inference pool instances:
@@ -457,17 +349,19 @@ Monitor the vLLM inference pool instances:
 [.console-input]
 [source,bash]
 ----
-cat > llm-d-pool-servicemonitor.yaml << 'EOF'
+cat << 'EOF' | oc apply -f-
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   name: llm-d-pool-metrics
+  labels:
+    monitoring.opendatahub.io/scrape: "true"
 spec:
   selector:
     matchLabels:
       app.kubernetes.io/component: llminferenceservice-workload
   endpoints:
-    - port: metrics
+    - port: https
       path: /metrics
       interval: 30s
       scheme: https
@@ -476,87 +370,11 @@ spec:
 EOF
 ----
 
-Apply the ServiceMonitor:
-
-[.console-input]
-[source,bash]
-----
-oc apply -f llm-d-pool-servicemonitor.yaml
-----
-
-=== Import llm-d Grafana dashboard
-
-Import the llm-d dashboard to visualize:
-
-* Request routing decisions
-* Cache hit rates per backend
-* Latency per backend
-* Throughput and load distribution
-
-1. Open Grafana
-2. Navigate to **Dashboards → Import**
-3. Upload `llm-d-dashboard.json` (provided in workshop materials)
-4. Select Prometheus data source
-5. Click **Import**
-
-Key panels in llm-d dashboard:
-* **Cache hit rate**: Percentage of requests benefiting from KV cache
-* **Routing distribution**: Which backend received each request
-* **Backend utilization**: Load per vLLM instance
-* **Prefix similarity**: How similar incoming requests are
-* **Throughput comparison**: Aggregate throughput across all backends
-
-=== Verify metrics are flowing
-
-[.console-input]
-[source,bash]
-----
-# Get router pod name
-ROUTER_POD=$(oc get pods -l app.kubernetes.io/component=llminferenceservice-router-scheduler -o jsonpath='{.items[0].metadata.name}')
-
-# Port-forward to router metrics endpoint
-oc port-forward $ROUTER_POD 9090:9090 &
-
-# Fetch router metrics
-curl -k https://localhost:9090/metrics | grep -E '(scheduler|cache|queue)'
-
-# Stop port-forward
-pkill -f "port-forward"
-----
-
-Look for metrics like:
-* `scheduler_endpoint_picker_scoring_duration_seconds`: Routing decision time
-* `scheduler_queue_depth`: Queue length per inference pool
-* Cache-related metrics from precise-prefix-cache-scorer
-* `vllm:num_requests_running` and `vllm:gpu_cache_usage_perc` from inference pools
-
 == Exercise 3: Run llm-d benchmarks
 
-Now run the same two scenarios against llm-d to measure P95/P99 tail latency improvements from cache-aware routing.
+We're run the same scenario against llm-d to measure P95/P99 tail latency improvements from cache-aware routing.
 
 **Goal**: Demonstrate that intelligent routing dramatically reduces tail latency for your most frustrated users.
-
-=== Warm up the system
-
-Before benchmarking, send some requests to prime the caches:
-
-[.console-input]
-[source,bash]
-----
-# Send warmup requests with shared prefixes
-for i in {1..50}; do
-  curl -k https://${LLMD_URL}/v1/completions \
-    -H "Content-Type: application/json" \
-    -d '{
-      "model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
-      "prompt": "You are a helpful customer service agent. User asks: How can I help you?",
-      "max_tokens": 30
-    }' &
-done
-wait
-----
-
-This primes the KV caches with the system prompt across llm-d's routing decisions.
 
 === Run llm-d benchmark
 
@@ -565,28 +383,120 @@ Run the same benchmark you performed in Modules 2 and 3, now against llm-d:
 [.console-input]
 [source,bash]
 ----
-# Get llm-d URL
-LLMD_URL=$(oc get llminferenceservice llama-llm-d -o jsonpath='{.status.url}')
-echo "LLMD_URL: ${LLMD_URL}"
-
-# Run benchmark with sweep profile
-guidellm benchmark \
-  --target "${LLMD_URL}" \
-  --profile sweep \
-  --max-seconds 60 \
-  --processor meta-llama/Meta-Llama-3.1-8B-Instruct \
-  --data "prompt_tokens=256,output_tokens=128"
+# Create the benchmark job
+cat << EOF | oc apply -f-
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: custom-benchmark-llm-d
+spec:
+  backoffLimit: 4
+  template:
+    spec:
+      serviceAccountName: default
+      restartPolicy: Never
+      containers:
+        - name: benchmark
+          image: quay.io/hayesphilip/multi-turn-benchmark:0.0.1
+          args:
+            - http://openshift-ai-inference-openshift-default.openshift-ingress.svc.cluster.local/llm-d-project/llama-llm-d/v1
+            - --parallel=9
+EOF
 ----
+
+While the benchmark runs, tail the logs to monitor progress:
+
+[.console-input]
+[source,bash]
+----
+oc logs -f job/custom-benchmark-vllm-scaled
+----
+
+While this runs, observe the Grafana dashboard.
 
 === Compare results
 
-Compare your P95 TTFT results across all three configurations:
+As our turns start, the KV cache hit rate looks as bad as the benchmark we performed against scaled vLLM as none of our conversations have been seen before.
+But this time, the KV Cache hit rate gets steadily higher, up to 90%, demonstrating much improved cache hit rate.
+We can also see the TTFT metrics are are a lot smoother with fewer spikes.
+Overall, the results in Grafana look a lot smoother and more balanced.
 
-* **Single GPU (Module 2)**: Your baseline P95 TTFT
-* **4 GPUs naive (Module 3)**: Your scaled P95 TTFT
-* **4 GPUs llm-d (this module)**: Your llm-d P95 TTFT
+image::benchmark-dashboard-llm-d.png[]
+
+When your benchmark finishes, you should again see a results summary similar to the following:
+
+[.console-output]
+[source,bash]
+----
+================================================================================
+BENCHMARK SUMMARY
+================================================================================
+
+Total time: 329.85s
+Total requests: 110
+Completed conversations: 11/11
+Requests per second: 0.33
+
+Time to First Token (TTFT):
+  Min:         91.25 ms
+  Max:       3843.17 ms
+  Mean:       361.73 ms
+  P50:        181.27 ms
+  P95:       1465.87 ms
+  P99:       3806.53 ms
+
+Total Request Time:
+  Min:         76.51 ms
+  Max:      33049.57 ms
+  Mean:     22908.39 ms
+  P50:      24590.28 ms
+  P95:      30933.66 ms
+
+TTFT by Turn Number:
+  Turn  1:    1991.52 ms avg (11 requests)
+  Turn  2:     158.48 ms avg (11 requests)
+  Turn  3:     157.08 ms avg (11 requests)
+  Turn  4:     168.91 ms avg (11 requests)
+  Turn  5:     183.76 ms avg (11 requests)
+  Turn  6:     174.61 ms avg (11 requests)
+  Turn  7:     168.92 ms avg (11 requests)
+  Turn  8:     185.47 ms avg (11 requests)
+  Turn  9:     178.06 ms avg (9 requests)
+  Turn 10:     185.00 ms avg (9 requests)
+
+TTFT by Document Type:
+  CODE:       371.58 ms avg (48 requests)
+  TEXT:       353.59 ms avg (58 requests)
+
+First Turn vs Subsequent Turns (Prefix Caching Indicator):
+  First turn avg:     1991.52 ms
+  Later turns avg:     173.02 ms
+  Speedup ratio:        11.51x
+
+================================================================================
+
+----
+
+When the benchmark finishes, create a comparison of your results:
+
+[.console-input]
+[source,text]
+----
+=== Tail Latency Comparison: 4 GPU vLLM vs. 4 GPU LLM-D ===
+
+ 4 GPU vLLM  (Module 3):
+- P95 TTFT: _______
+
+4 4 GPU LLM-D  (Module 4):
+- P95 TTFT: _______
+
+Improvement: _______ %
+----
+
+What difference are you seeing between the two runs?
 
 **Why llm-d works**:
+
 * llm-d routes requests with similar prefixes to the same backend
 * Cache hits eliminate redundant prefill computation
 * P95/P99 users benefit from cached prefill
@@ -594,106 +504,17 @@ Compare your P95 TTFT results across all three configurations:
 
 **The key difference**: llm-d routes similar requests to the same backend, ensuring cache hits. Naive scaling routes randomly, causing cache misses and forcing recomputation.
 
-== Exercise 4: Analyze llm-d performance gains
-
-Compare all three configurations: single GPU, naive 4 GPU, and llm-d 4 GPU by analyzing your benchmark results.
-
-== Exercise 5: Monitor cache effectiveness in Grafana
-
-Watch llm-d's cache-aware routing directly improve tail latency in real-time:
-
-1. Open Grafana llm-d dashboard
-2. Run the benchmark
-3. Observe in real-time:
-   * **Cache hit rate**: Should increase for workloads with shared prefixes
-   * **Routing decisions**: Requests with similar prefixes consistently route to same backends
-   * **Backend utilization**: Uneven but intentional (hot caches get more traffic)
-   * **P95/P99 latency**: Compare to your Module 3 results
-
-**Key metrics to watch**:
-* **Cache hit rate climbing**: Starts low, climbs as system warms up
-* **Routing affinity**: Similar prompts cluster on same backend
-
-Compare this to the naive scaling dashboard from Module 3:
-* **Naive**: All backends equally loaded, low cache hit rate
-* **llm-d**: Uneven but intentional distribution, higher cache hit rate
-
-Take screenshots showing:
-* Cache hit rate over time
-* P95/P99 latency comparison
-* Routing distribution showing cache affinity
-
-== Exercise 6: Understanding when llm-d provides value
-
-llm-d's benefit depends on workload characteristics:
-
-=== High prefix similarity (best case)
-
-Workloads with shared system prompts or common prefixes benefit most from llm-d. This includes:
-* Customer service chatbots with shared system prompts
-* Multi-turn conversations
-* Applications with consistent instruction prefixes
-
-=== Low prefix similarity
-
-For completely unique prompts with no shared prefixes:
-* Cache hit rate will be low
-* Performance similar to naive scaling
-* llm-d doesn't hurt, but doesn't help much
-
-=== Partial prefix sharing
-
-Mixed workloads with some shared prefixes:
-* Moderate cache hit rates
-* Proportional P95/P99 improvements
-* Even partial prefix sharing provides measurable benefits
-
-**Key insight**: The more prefix similarity in your workload, the more llm-d helps reduce tail latency.
-
 == Module 4 summary
 
 **What you accomplished:**
-* Deployed llm-d orchestrator with Precise Prefix Cache Aware Routing
+
+* Deployed llm-d orchestrator with Prefix Cache Aware Routing
 * Configured llm-d to intelligently manage 4 vLLM backend instances
-* Set up comprehensive monitoring with Grafana to track cache hits and P95/P99 latency
 * Ran benchmarks demonstrating tail latency improvements with cache-aware routing
 * Proved that intelligent routing solves the problem naive scaling couldn't
 
-**Key takeaways - The Tail Latency Breakthrough:**
-
-Compare your results across all three configurations:
-
-[.console-input]
-[source,text]
-----
-=== Your Results Summary ===
-
-Single GPU (Module 2):
-- P95 TTFT: _______ (your recorded value)
-
-4 GPUs Naive (Module 3):
-- P95 TTFT: _______ (your recorded value)
-- Improvement over single GPU: _______ %
-
-4 GPUs llm-d (Module 4):
-- P95 TTFT: _______ (your recorded value)
-- Improvement over naive: _______ %
-----
-
-**The critical insight:**
-* Same hardware (4 GPUs)
-* Same capacity (requests per second)
-* But **dramatically different customer experience** for P95/P99 users
-* **Cache-aware routing reduces the tail latency problem**
-
-**Why llm-d works for tail latency:**
-* **Analyzes prompt prefixes** and routes similar requests to same backend
-* **Maximizes KV cache hits**: Requests benefit from cached prefill
-* **Eliminates redundant computation**: Shared prefixes cached, not recomputed
-* **Routes multi-turn to same backend**: Conversation history stays cached
-* **Directly attacks the P95/P99 problem**: Cache hits mean your worst-case users avoid queuing
-
 **When llm-d provides value:**
+
 * Workloads with shared prefixes (system prompts, common contexts)
 * Multi-turn conversations requiring context reuse
 * Any scenario where cache misses cause high P95/P99 latency
