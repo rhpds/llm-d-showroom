@@ -437,7 +437,7 @@ spec:
           args:
             - benchmark
             - run
-            - --target=http://llama-vllm-single-svc-predictor:8080
+            - --target=http://llama-vllm-single-predictor:8080
             - --profile=sweep
             - --max-seconds=60
             - --processor=RedHatAI/Meta-Llama-3.1-8B-Instruct-FP8-dynamic
@@ -587,8 +587,9 @@ spec:
         - name: benchmark
           image: quay.io/hayesphilip/multi-turn-benchmark:0.0.1
           args:
-            - http://llama-vllm-single-svc-predictor:8080/v1
+            - http://llama-vllm-single-predictor:8080/v1
             - --parallel=9
+            - -v
 EOF
 
 oc wait --for=jsonpath='{.status.ready}'=1 job/custom-benchmark-vllm-single
