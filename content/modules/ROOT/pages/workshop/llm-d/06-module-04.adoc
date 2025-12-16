@@ -233,11 +233,11 @@ Watch the LLMInferenceService deployment:
 [.console-input]
 [source,bash]
 ----
+# See inference pool pods being created (4 replicas)
+oc get pods -l kserve.io/component=workload
+
 # Watch LLMInferenceService status
 oc get llminferenceservice llama-llm-d -w
-
-# Watch inference pool pods being created (4 replicas)
-oc get pods -l kserve.io/component=workload -w
 ----
 
 The deployment will go through these states:
