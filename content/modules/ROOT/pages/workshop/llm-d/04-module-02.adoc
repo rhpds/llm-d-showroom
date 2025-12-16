@@ -189,9 +189,9 @@ Example output:
 [.console-output]
 [source,bash]
 ----
-NAME                URL                                                                      READY   PREV   LATEST   PREVROLLEDOUTREVISION   LATESTREADYREVISION   AGE
-llama-vllm-single   http://llama-vllm-single-svc-predictor.llm-d-project.svc.cluster.local   False                                                                 4s
-llama-vllm-single   http://llama-vllm-single-svc-predictor.llm-d-project.svc.cluster.local   True                                                                  98s
+NAME                URL                                                                  READY   PREV   LATEST   PREVROLLEDOUTREVISION   LATESTREADYREVISION   AGE
+llama-vllm-single   http://llama-vllm-single-predictor.llm-d-project.svc.cluster.local   False                                                                 4s
+llama-vllm-single   http://llama-vllm-single-predictor.llm-d-project.svc.cluster.local   True                                                                  98s
 ----
 
 The deployment will progress to `READY` being `True` after the model is loaded. You can press `Ctrl+C` to cancel once it does.
@@ -437,7 +437,7 @@ spec:
           args:
             - benchmark
             - run
-            - --target=http://llama-vllm-single-svc-predictor:8080
+            - --target=http://llama-vllm-single-predictor:8080
             - --profile=sweep
             - --max-seconds=60
             - --processor=RedHatAI/Meta-Llama-3.1-8B-Instruct-FP8-dynamic
@@ -587,8 +587,9 @@ spec:
         - name: benchmark
           image: quay.io/hayesphilip/multi-turn-benchmark:0.0.1
           args:
-            - http://llama-vllm-single-svc-predictor:8080/v1
+            - http://llama-vllm-single-predictor:8080/v1
             - --parallel=9
+            - -v
 EOF
 
 oc wait --for=jsonpath='{.status.ready}'=1 job/custom-benchmark-vllm-single
@@ -605,7 +606,7 @@ job.batch/custom-benchmark-vllm-single condition met
 ================================================================================
 Multi-Turn Conversation Benchmark (Seed Documents)
 ================================================================================
-Target URL: https://llama-vllm-single-svc-predictor:8080/v1
+Target URL: https://llama-vllm-single-predictor:8080/v1
 Seed documents directory: /opt/app-root/src/seed-documents
 Conversations: 11
 Turns per conversation: 10

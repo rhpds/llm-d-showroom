@@ -455,6 +455,7 @@ spec:
           args:
             - http://llama-vllm-scaled-clusterip:8080/v1
             - --parallel=9
+            - -v
 EOF
 
 oc wait --for=jsonpath='{.status.ready}'=1 job/custom-benchmark-vllm-scaled
