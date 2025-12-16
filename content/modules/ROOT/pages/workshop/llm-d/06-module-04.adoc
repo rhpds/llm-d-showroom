@@ -82,7 +82,7 @@ cat << 'EOF' | oc apply -f-
 apiVersion: gateway.networking.k8s.io/v1
 kind: GatewayClass
 metadata:
-  name: openshift-ai-inference
+  name: openshift-default
 spec:
   controllerName: openshift.io/gateway-controller/v1
 ---
@@ -314,6 +314,16 @@ Expected output:
 
 == Exercise 2: Configure llm-d monitoring
 
+=== Enable namespace monitoring
+
+First, label the namespace to enable Prometheus scraping:
+
+[.console-input]
+[source,bash]
+----
+oc label namespace llm-d-project openshift.io/cluster-monitoring=true
+----
+
 === Create ServiceMonitor for llm-d router
 
 Monitor the router's scheduling decisions and cache hit rates:
@@ -409,7 +419,7 @@ While the benchmark runs, tail the logs to monitor progress:
 [.console-input]
 [source,bash]
 ----
-oc logs -f job/custom-benchmark-vllm-scaled
+oc logs -f job/custom-benchmark-llm-d
 ----
 
 While this runs, observe the Grafana dashboard.

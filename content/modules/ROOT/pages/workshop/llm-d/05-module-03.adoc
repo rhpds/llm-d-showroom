@@ -182,10 +182,10 @@ The models are being loaded into VRAM, along with CUDA graphs and preallocating 
 
 You can also check the logs to see vLLM come ready to serve:
 
-[.console-output]
-[shell,bash]
+[.console-input]
+[source,bash]
 ----
-oc logs -l serving.kserve.io/inferenceservice=llama-vllm-scaled --all-containers -f
+oc logs -l serving.kserve.io/inferenceservice=llama-vllm-scaled --all-containers -f  --max-log-requests 12
 ----
 
 === Verify the deployment
@@ -426,6 +426,8 @@ echo "https://$route/d/llm-performance/llm-d-performance-dashboard"
 ----
 
 You can select the `scaled` model from this pulldown to scope you graph to only the pods for this model.
+
+**Note:** You may need to refresh your browser to see the `scaled` model in the pulldown.
 
 image::grafana-model-pulldown.png[]
 
