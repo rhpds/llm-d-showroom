@@ -427,7 +427,10 @@ echo "https://$route/d/llm-performance/llm-d-performance-dashboard"
 
 You can select the `scaled` model from this pulldown to scope you graph to only the pods for this model.
 
-**Note:** You may need to refresh your browser to see the `scaled` model in the pulldown.
+[NOTE]
+====
+You may need to refresh your browser to see the `scaled` model in the pulldown.
+====
 
 image::grafana-model-pulldown.png[]
 
