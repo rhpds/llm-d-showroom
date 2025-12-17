@@ -82,7 +82,7 @@ cat << 'EOF' | oc apply -f-
 apiVersion: gateway.networking.k8s.io/v1
 kind: GatewayClass
 metadata:
-  name: openshift-ai-inference
+  name: openshift-default
 spec:
   controllerName: openshift.io/gateway-controller/v1
 ---
@@ -233,11 +233,11 @@ Watch the LLMInferenceService deployment:
 [.console-input]
 [source,bash]
 ----
+# See inference pool pods being created (4 replicas)
+oc get pods -l kserve.io/component=workload
+
 # Watch LLMInferenceService status
 oc get llminferenceservice llama-llm-d -w
-
-# Watch inference pool pods being created (4 replicas)
-oc get pods -l kserve.io/component=workload -w
 ----
 
 The deployment will go through these states:
@@ -314,9 +314,11 @@ Expected output:
 
 == Exercise 2: Configure llm-d monitoring
 
+Before, we were using the ServiceMonitor that came out of the box with KServe. Right now, we need to tweak some things to get the metrics to scrape properly for our user-workload-monitoring instance.
+
 === Create ServiceMonitor for llm-d router
 
-Monitor the router's scheduling decisions and cache hit rates:
+Create a ServiceMonitor to scrape the Endpoint Picker:
 
 [.console-input]
 [source,bash]
@@ -332,6 +334,7 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/component: llminferenceservice-router-scheduler
+  namespaceSelector: {}
   endpoints:
     - port: metrics
       path: /metrics
@@ -342,9 +345,9 @@ spec:
 EOF
 ----
 
-=== Create ServiceMonitor for inference pools
+=== Create ServiceMonitor for llm-d inference pool
 
-Monitor the vLLM inference pool instances:
+Create a ServiceMonitor to scrape the vLLM instances:
 
 [.console-input]
 [source,bash]
@@ -360,6 +363,7 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/component: llminferenceservice-workload
+  namespaceSelector: {}
   endpoints:
     - port: https
       path: /metrics
@@ -409,7 +413,7 @@ While the benchmark runs, tail the logs to monitor progress:
 [.console-input]
 [source,bash]
 ----
-oc logs -f job/custom-benchmark-vllm-scaled
+oc logs -f job/custom-benchmark-llm-d
 ----
 
 While this runs, observe the Grafana dashboard.
