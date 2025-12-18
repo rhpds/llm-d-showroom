@@ -661,5 +661,5 @@ Can intelligent cache-aware routing dramatically reduce P95 latency without addi
 
 **Next steps:**
 
-Module 4 will deploy the same model, on the same hardware, with llm-d with Precise Prefix Cache Aware Routing.
+Module 4 will deploy the same model, on the same hardware, with llm-d with Prefix Cache Aware Routing.
 You'll configure llm-d to orchestrate your 4 vLLM replicas intelligently, routing requests to maximize cache hits and directly reduce P95 latency.

@@ -107,7 +107,7 @@ This workshop teaches you how to reduce P95 and P99 latency using llm-d—an int
 By the end of this workshop, you'll be able to:
 
 * **Deploy and benchmark LLM inference** using vLLM, KServe, and OpenShift AI
-* **Measure tail latency scientifically** with GuideLLM benchmarks (P95, P99, TTFT)
+* **Measure tail latency scientifically** with benchmarking tools (P95, P99, TTFT)
 * **Identify latency bottlenecks** - prefill queuing, KV cache misses, multi-turn chat inefficiency
 * **Compare scaling strategies** - naive horizontal scaling vs. intelligent cache-aware routing
 * **Deploy llm-d** with Precise Prefix Cache Aware Routing

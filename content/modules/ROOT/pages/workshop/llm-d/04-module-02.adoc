@@ -184,6 +184,12 @@ Watch the InferenceService status:
 oc get inferenceservice llama-vllm-single -w
 ----
 
+[NOTE]
+====
+It can take a few minutes for the state to change to "Ready"
+====
+
+
 Example output:
 
 [.console-output]
