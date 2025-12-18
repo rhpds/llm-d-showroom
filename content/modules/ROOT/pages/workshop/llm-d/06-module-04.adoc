@@ -3,7 +3,7 @@
 :toc: macro
 :toclevels: 2
 
-You've proven that 4 GPUs with naive scaling don't significantly reduce P95/P99 tail latency—your most frustrated users still experience slow responses. Now it's time to deploy llm-d with Prefix Cache Aware Routing to try and reduce tail latency through intelligent cache reuse.
+You've proven that 4 GPUs with naive scaling doesn't significantly reduce P95/P99 tail latency—your most frustrated users still experience slow responses. Now it's time to deploy llm-d with Prefix Cache Aware Routing to try and reduce tail latency through intelligent cache reuse.
 
 In this module, you'll deploy llm-d to orchestrate 4 vLLM instances with cache-aware routing, run the same benchmarks, and test for P95/P99 improvements.
 
