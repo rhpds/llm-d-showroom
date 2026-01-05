@@ -13,12 +13,166 @@ Before deploying and benchmarking systems, you need to understand the technical 
 
 By the end of this module, you'll be able to:
 
+* Deploy a generative AI model using KServe and vLLM ServingRuntime in OpenShift AI
 * Identify the three bottlenecks causing high tail latency in LLM inference
 * Explain how KV cache sharing eliminates redundant computation and reduces P95/P99 latency
 * Understand why adding more GPUs improves capacity but not tail latency
 * Describe how llm-d's cache-aware routing maximizes cache hits
 * Recognize which workload scenarios benefit most from intelligent orchestration
 * Articulate the value proposition in customer experience terms
+
+== Quick start: Deploy your model (do this first!)
+
+[NOTE]
+====
+**Start this deployment now** - it takes a few minutes to complete while the model is pulled and loaded.
+While it runs, continue reading the concepts below. We'll test the deployment at the end of this module.
+====
+
+=== Verify your environment
+
+First, confirm your OpenShift AI environment is ready:
+
+[.console-input]
+[source,bash]
+----
+# Verify you're logged into OpenShift
+oc whoami
+
+# Select your lab namespace
+oc project llm-d-project
+
+# Verify GPU node is available
+oc get nodes -l nvidia.com/gpu.present=true
+----
+
+Example output:
+
+[.console-output]
+[source,bash]
+----
+system:admin
+Now using project "llm-d-project" on server "https://api.cluster-fnj7b.fnj7b.sandbox5571.opentlc.com:6443".
+NAME                                        STATUS   ROLES                         AGE   VERSION
+ip-10-0-47-154.us-east-2.compute.internal   Ready    control-plane,master,worker   24h   v1.33.5
+----
+
+=== Create the vLLM ServingRuntime
+
+KServe uses ServingRuntimes to define how models are served. Create a vLLM-based ServingRuntime configuration:
+
+[.console-input]
+[source,bash]
+----
+cat << 'EOF' | oc apply -f-
+apiVersion: serving.kserve.io/v1alpha1
+kind: ServingRuntime
+metadata:
+  annotations:
+    opendatahub.io/apiProtocol: REST
+    opendatahub.io/recommended-accelerators: '["nvidia.com/gpu"]'
+    opendatahub.io/runtime-version: v3.2.4
+    opendatahub.io/serving-runtime-scope: global
+    openshift.io/display-name: RHAIIS (vLLM) NVIDIA GPU ServingRuntime for KServe
+    openshift.io/template-display-name: RHAIIS (vLLM) NVIDIA GPU ServingRuntime for KServe
+    opendatahub.io/template-name: rhaiis-cuda-template
+  labels:
+    opendatahub.io/dashboard: "true"
+  name: rhaiis-cuda
+spec:
+  annotations:
+    prometheus.io/path: /metrics
+    prometheus.io/port: "8080"
+  containers:
+  - args:
+    - --port=8080
+    - --model=/mnt/models
+    - --served-model-name={{.Name}}
+    command:
+    - python
+    - -m
+    - vllm.entrypoints.openai.api_server
+    env:
+    - name: HF_HOME
+      value: /tmp/hf_home
+    - name: HF_HUB_OFFLINE
+      value: "1"
+    - name: VLLM_NO_USAGE_STATS
+      value: "1"
+    image: registry.redhat.io/rhaiis/vllm-cuda-rhel9:3.2.4
+    name: kserve-container
+    ports:
+    - containerPort: 8080
+      protocol: TCP
+  multiModel: false
+  supportedModelFormats:
+  - autoSelect: true
+    name: vLLM
+EOF
+----
+
+=== Create the InferenceService
+
+Now deploy the Llama 3.1 8B model using the vLLM runtime:
+
+[.console-input]
+[source,bash]
+----
+cat << 'EOF' | oc apply -f-
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: llama-vllm-single
+  annotations:
+    openshift.io/display-name: Llama 3.1 8B FP8 Single
+    security.opendatahub.io/enable-auth: "false"
+    serving.kserve.io/deploymentMode: RawDeployment
+    opendatahub.io/hardware-profile-name: accelerated-profile
+    opendatahub.io/hardware-profile-namespace: redhat-ods-applications
+spec:
+  predictor:
+    automountServiceAccountToken: false
+    maxReplicas: 1
+    minReplicas: 1
+    deploymentStrategy:
+      type: Recreate
+    model:
+      modelFormat:
+        name: vLLM
+      name: ''
+      resources:
+        limits:
+          cpu: '8'
+          memory: 16Gi
+          nvidia.com/gpu: '1'
+        requests:
+          cpu: '2'
+          memory: 8Gi
+          nvidia.com/gpu: '1'
+      runtime: rhaiis-cuda
+      storageUri: 'oci://registry.redhat.io/rhelai1/modelcar-llama-3-1-8b-instruct-fp8-dynamic:1.5'
+      args:
+        - --max-model-len=65536
+EOF
+----
+
+=== Monitor deployment (in background)
+
+Start watching the deployment status, then continue reading:
+
+[.console-input]
+[source,bash]
+----
+# Watch InferenceService status - press Ctrl+C when it shows READY=True
+oc get inferenceservice llama-vllm-single -w
+----
+
+[NOTE]
+====
+It takes a few minutes for the model to load and the state to change to "Ready".
+**Leave this running in your terminal and continue reading the concepts below.**
+We'll come back to test the deployment at the end of this module.
+====
 
 == Understanding LLM inference fundamentals
 
@@ -335,11 +489,131 @@ llm-d is a distributed inference orchestration layer that sits above multiple vL
 
 **Key insight for tail latency**: Adding more GPUs with naive scaling increases *capacity* (more requests per second) but does **not** reduce *tail latency* (P95/P99). Cache misses still occur, causing high latency for unlucky users. llm-d's cache-aware routing directly attacks the tail latency problem by eliminating redundant computation through intelligent cache reuse.
 
+== Test your deployment
+
+Your model deployment should be ready by now. Let's verify it's working correctly.
+
+=== Check deployment status
+
+[.console-input]
+[source,bash]
+----
+# Check the InferenceService is ready
+oc get inferenceservice llama-vllm-single
+----
+
+You should see `READY` showing `True`:
+
+[.console-output]
+[source,bash]
+----
+NAME                URL                                                                  READY   PREV   LATEST   PREVROLLEDOUTREVISION   LATESTREADYREVISION   AGE
+llama-vllm-single   http://llama-vllm-single-predictor.llm-d-project.svc.cluster.local   True                                                                  5m
+----
+
+=== Test the model
+
+Port-forward to the instance and test it:
+
+[.console-input]
+[source,bash]
+----
+# Port forward to the pod
+oc port-forward deployment/llama-vllm-single-predictor 8080:8080 &
+----
+
+[NOTE]
+====
+Press **Enter** to get back to the command prompt after starting the port-forward.
+====
+
+Check the models endpoint:
+
+[.console-input]
+[source,bash]
+----
+# Check the list of models
+curl http://localhost:8080/v1/models | jq .
+----
+
+Example output:
+
+[.console-output]
+[source,bash]
+----
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "llama-vllm-single",
+      "object": "model",
+      "created": 1764775080,
+      "owned_by": "vllm",
+      "root": "/mnt/models",
+      "parent": null,
+      "max_model_len": 65536,
+      ...
+    }
+  ]
+}
+----
+
+Now test inference:
+
+[.console-input]
+[source,bash]
+----
+# Send a test request to the model
+curl http://localhost:8080/v1/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llama-vllm-single",
+    "prompt": "San Francisco is a",
+    "max_tokens": 50,
+    "temperature": 0.7
+  }' | jq .
+----
+
+Example output:
+
+[.console-output]
+[source,bash]
+----
+{
+  "id": "cmpl-3e58a92a36bd4336b767a26bb089d0df",
+  "object": "text_completion",
+  "created": 1764775084,
+  "model": "llama-vllm-single",
+  "choices": [
+    {
+      "index": 0,
+      "text": " top tourist destination in the United States, attracting millions of visitors each year...",
+      "logprobs": null,
+      "finish_reason": "length"
+    }
+  ],
+  ...
+}
+----
+
+Your single vLLM instance is up and running successfully!
+
+[NOTE]
+====
+Keep the port-forward running—you'll need it in the next module for benchmarking.
+====
+
 == Module 1 summary
 
-You've completed the conceptual foundation for understanding and reducing tail latency in LLM inference.
+You've completed the conceptual foundation for understanding and reducing tail latency in LLM inference, and deployed your first model.
+
+**What you accomplished:**
+
+* Deployed Llama 3.1 8B Instruct using KServe and vLLM on a single GPU
+* Verified the model is serving requests correctly
 
 **What you learned:**
+
 * **Tail latency (P95/P99)** represents the experience of your most frustrated users
 * **Three main bottlenecks** cause high tail latency:
   - Prefill queuing (head-of-line blocking from large prompts)
@@ -371,7 +645,7 @@ You've completed the conceptual foundation for understanding and reducing tail l
 
 **Next steps:**
 
-Module 2 will establish your **tail latency baseline** by deploying a single-GPU vLLM instance and running comprehensive benchmarks across two scenarios:
+Module 2 will establish your **tail latency baseline** by running comprehensive benchmarks on your deployed model across two scenarios:
 
 1. **Single-turn large prompts** - Measuring prefill bottleneck impact on P95
 2. **Multi-turn chat** - Measuring cache miss impact on conversation latency
