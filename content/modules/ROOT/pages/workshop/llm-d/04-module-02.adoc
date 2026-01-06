@@ -138,7 +138,7 @@ spec:
             - run
             - --target=http://llama-vllm-single-predictor:8080
             - --profile=sweep
-            - --max-seconds=60
+            - --max-seconds=30
             - --processor=RedHatAI/Meta-Llama-3.1-8B-Instruct-FP8-dynamic
             - --data=prompt_tokens=256,output_tokens=128
           volumeMounts:
@@ -156,7 +156,7 @@ EOF
 
 [WARNING]
 ====
-**This benchmark takes approximately 10 minutes to complete.**
+**This benchmark takes approximately 5 minutes to complete.**
 The terminal may disconnect during long-running operations.
 You may want to press `Enter` occasionally to prevent the Showroom environment from timing out.
 ====
@@ -235,7 +235,7 @@ job.batch/guidellm-vllm-single-sweep condition met
 **What this benchmark does**:
 
 * `--profile=sweep`: Runs multiple load levels to find saturation point
-* `--max-seconds=60`: Runs for 60 seconds per load level
+* `--max-seconds=30`: Runs for 30 seconds per load level
 * `--processor`: Specifies the HuggingFace repository with the tokenizer configuration for accurate token counting
 * `--data`: Generates synthetic prompts with 256 input tokens and 128 output tokens
 
@@ -281,7 +281,7 @@ Run a benchmark to establish your single-GPU baseline performance for our scenar
 
 [WARNING]
 ====
-**This benchmark takes approximately 10-12 minutes to complete.**
+**This benchmark takes approximately 5-6 minutes to complete.**
 The terminal may disconnect during long-running operations.
 You may want to press `Enter` occasionally to prevent the Showroom environment from timing out.
 ====
@@ -307,6 +307,7 @@ spec:
           args:
             - http://llama-vllm-single-predictor:8080/v1
             - --parallel=9
+            - --turns=5
             - -v
 EOF
 
@@ -341,7 +342,7 @@ Multi-Turn Conversation Benchmark (Seed Documents)
 Target URL: https://llama-vllm-single-predictor:8080/v1
 Seed documents directory: /opt/app-root/src/seed-documents
 Conversations: 11
-Turns per conversation: 10
+Turns per conversation: 5
 Max tokens per response: 500
 Parallel workers: 9
 Request delay range: 0.5s - 2.0s
@@ -374,7 +375,7 @@ WARM-UP PHASE
 
 === Make observations during the benchmark pass
 
-This benchmark will take about 10 minutes to complete again.
+This benchmark will take about 5 minutes to complete again.
 One of the things you should be able to notice, while monitoring the Grafana dashboard as it runs,
 is that as the request queue piles up, the TTFT and E2E latencies climb significantly.
 Right now, we're simulating 11 users worth of simultaneous multi-turn chat with a diverse set of use cases.
@@ -395,46 +396,41 @@ When it's finished, you should get a results summary like this:
 BENCHMARK SUMMARY
 ================================================================================
 
-Total time: 672.31s
-Total requests: 110
+Total time: 284.37s
+Total requests: 55
 Completed conversations: 11/11
-Requests per second: 0.16
+Requests per second: 0.19
 
 Time to First Token (TTFT):
-  Min:         85.75 ms
-  Max:      26196.25 ms
-  Mean:      6718.04 ms
-  P50:       3632.15 ms
-  P95:      22249.44 ms
-  P99:      25653.86 ms
+  Min:        125.24 ms
+  Max:      10168.75 ms
+  Mean:      1852.02 ms
+  P50:       1144.39 ms
+  P95:       8249.47 ms
+  P99:      10168.75 ms
 
 Total Request Time:
-  Min:      13852.12 ms
-  Max:      83334.75 ms
-  Mean:     51820.98 ms
-  P50:      51447.94 ms
-  P95:      77591.03 ms
+  Min:      19656.71 ms
+  Max:      54680.32 ms
+  Mean:     43131.79 ms
+  P50:      45244.69 ms
+  P95:      54501.77 ms
 
 TTFT by Turn Number:
-  Turn  1:    5275.22 ms avg (11 requests)
-  Turn  2:    1237.00 ms avg (11 requests)
-  Turn  3:     529.62 ms avg (11 requests)
-  Turn  4:    1604.98 ms avg (11 requests)
-  Turn  5:    3211.92 ms avg (11 requests)
-  Turn  6:    4487.96 ms avg (11 requests)
-  Turn  7:   10181.45 ms avg (11 requests)
-  Turn  8:   10590.06 ms avg (11 requests)
-  Turn  9:   14725.66 ms avg (11 requests)
-  Turn 10:   15336.50 ms avg (11 requests)
+  Turn  1:    5173.23 ms avg (11 requests)
+  Turn  2:     172.30 ms avg (11 requests)
+  Turn  3:     544.71 ms avg (11 requests)
+  Turn  4:    1407.00 ms avg (11 requests)
+  Turn  5:    1962.88 ms avg (11 requests)
 
 TTFT by Document Type:
-  CODE:      7190.09 ms avg (50 requests)
-  TEXT:      6324.66 ms avg (60 requests)
+  CODE:      2126.67 ms avg (25 requests)
+  TEXT:      1623.15 ms avg (30 requests)
 
 First Turn vs Subsequent Turns (Prefix Caching Indicator):
-  First turn avg:     5275.22 ms
-  Later turns avg:    6878.35 ms
-  Speedup ratio:         0.77x
+  First turn avg:     5173.23 ms
+  Later turns avg:    1021.72 ms
+  Speedup ratio:         5.06x
 
 ================================================================================
 ----
