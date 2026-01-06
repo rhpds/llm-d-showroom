@@ -52,49 +52,15 @@ Throughout the workshop, you'll work on a realistic business problem:
 * Improve latency for better customer experience
 * Deploy within 90-day timeline
 
-== Understanding tail latency: P95 and P99
+== Why tail latency matters
 
-Before diving into the workshop, let's understand what P95 and P99 latency mean and why they matter for your users.
+**Tail latency (P95/P99)** represents the experience of your most frustrated users—the 5% or 1% who wait the longest for responses.
 
-**Time to First Token (TTFT)** is one of the critical latency metrics for LLM inference:
-
-* **TTFT**: The time from receiving a request until the first token is generated and streamed back to the user
-* For streaming responses, this is when users see the first word appear
-* Low TTFT creates a responsive, interactive experience
-* High TTFT makes users wait with a blank screen, creating frustration
-
-**Percentile latency** measures the TTFT experienced by a specific percentage of your users:
-
-* **P50 (median)**: 50% of users get a response this fast or faster
-* **P95**: 95% of users get their first token this fast or faster (5% experience worse latency)
-* **P99**: 99% of users get their first token this fast or faster (1% experience worse latency)
-
-**Why P95 and P99 matter more than average:**
-
-Think about a customer service chatbot with these metrics:
-
-* Average latency: 200ms (looks great!)
-* P50 latency: 180ms (most users happy)
-* P95 latency: 1200ms (5% of users wait over a second)
-* P99 latency: 2500ms (1% of users wait over 2 seconds!)
-
-Your "average" looks excellent, but **5-10% of your customers are having a terrible experience**.
-
-These are often your most important users:
-
-* Users during peak traffic periods
-* Users with complex multi-turn conversations
-* Users who happen to hit busy backend instances
-
-**Tail latency = "What your most frustrated users see"**
-
-In production systems, tail latency directly impacts:
-
-* **Customer satisfaction**: Frustrated users file support tickets or churn
-* **Business metrics**: Slow responses reduce conversion rates and engagement
-* **Service Level Objectives (SLOs)**: P95/P99 targets are critical for production readiness
+Your "average" latency might look great, but if 5% of users experience 10x worse response times, you have unhappy customers filing support tickets and churning.
 
 **This workshop focuses on reducing tail latency** because adding more GPUs improves capacity (throughput) but doesn't necessarily make your worst-case users any happier. You'll learn how intelligent routing can dramatically reduce P95 and P99 latency without adding hardware.
+
+Module 1 covers the technical details of what causes tail latency and how llm-d addresses it.
 
 == What you'll learn and demonstrate
 
@@ -114,50 +80,32 @@ By the end of this workshop, you'll be able to:
 * **Quantify customer experience improvements** - connect P95/P99 reductions to user satisfaction
 * **Articulate value** in terms users understand: "faster responses for your most frustrated customers"
 
-=== What you'll have accomplished
-
-By the end of this workshop, you'll have:
-
-* **Deployed three configurations** and collected real tail latency data
-* **Compared P95/P99 latency** across single GPU, naive multi-GPU scaling, and llm-d orchestration
-* **Tested multiple scenarios** - single-turn large prompts and multi-turn chat conversations
-* **Measured the user experience impact** - how much faster are responses for your most frustrated users?
-* **Built a recommendation** focusing on customer satisfaction improvements, not just technical metrics
-
-=== What makes this workshop different
-
-This is NOT a lecture-heavy introduction to distributed systems. You'll spend:
-
-* **20 minutes** on concepts (Module 1)
-* **100 minutes** deploying, benchmarking, and analyzing real systems (Modules 2-5)
-
-You'll generate real performance data, make architectural decisions based on benchmarks, and build a business case with quantified ROI.
-
 == Workshop modules
 
 **Total duration**: 105 minutes (~2 hours)
 
-=== Module 1: Introduction & Core Concepts (20 minutes)
+=== Module 1: Deploy Model & Core Concepts (20 minutes)
 
-Understand what causes tail latency and how to fix it:
+Deploy your first model and understand what causes tail latency:
 
+* **Deploy Llama 3.1 8B Instruct** on a single GPU using KServe and vLLM
 * **Latency bottlenecks**: Prefill queuing, KV cache misses, multi-turn chat inefficiency
 * **LLM inference phases**: Prefill vs. decode and their different latency characteristics
 * **KV cache sharing**: Why cache hits eliminate queuing and reduce P95
 * **llm-d capabilities**: Intelligent scheduling to reduce tail latency
 
-**Outcome**: Understanding that scaling for capacity ≠ scaling for latency.
+**Outcome**: Working model deployment and understanding that scaling for capacity ≠ scaling for latency.
 
-=== Module 2: Deploy Model with vLLM & Benchmark (25 minutes)
+=== Module 2: Benchmark & Establish Baseline (25 minutes)
 
 Establish your tail latency baseline:
 
-* Deploy Llama 3.1 8B Instruct on a single GPU using KServe and vLLM
 * Configure Grafana dashboard for real-time latency metrics
-* Run GuideLLM benchmarks from the terminal
+* Run GuideLLM benchmarks to measure throughput and latency
+* Run custom multi-turn benchmarks simulating realistic workloads
 * Measure P50, P95, P99 latency under load
 
-**Outcome**: Baseline showing where tail latency problems emerge.
+**Outcome**: Baseline showing where tail latency problems emerge under realistic conditions.
 
 === Module 3: Scale vLLM & Compare Performance (25 minutes)
 
