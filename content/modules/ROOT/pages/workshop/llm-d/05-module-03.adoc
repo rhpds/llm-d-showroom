@@ -436,8 +436,7 @@ image::grafana-model-pulldown.png[]
 
 === Run the benchmark
 
-Run the same benchmark you performed at the end of Module 2,
-now against the scaled deployment with our custom service:
+We're going to run the same benchmark that we ran in module 2, but this time with ten turns per conversation.
 
 [WARNING]
 ====
