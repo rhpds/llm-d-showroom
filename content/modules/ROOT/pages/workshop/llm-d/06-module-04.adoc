@@ -384,6 +384,12 @@ We're run the same scenario against llm-d to measure P95/P99 tail latency improv
 
 Run the same benchmark you performed in Modules 2 and 3, now against llm-d:
 
+[WARNING]
+====
+**This benchmark takes approximately 5-6 minutes to complete** (faster than previous runs due to improved cache hit rates).
+The terminal may disconnect during long-running operations.
+====
+
 [.console-input]
 [source,bash]
 ----
@@ -415,6 +421,20 @@ While the benchmark runs, tail the logs to monitor progress:
 ----
 oc logs -f job/custom-benchmark-llm-d
 ----
+
+[TIP]
+====
+**If your terminal disconnects**, you can resume monitoring with:
+[source,bash]
+----
+oc logs -f job/custom-benchmark-llm-d
+----
+To check if the job has completed:
+[source,bash]
+----
+oc get job custom-benchmark-llm-d
+----
+====
 
 While this runs, observe the Grafana dashboard.
 

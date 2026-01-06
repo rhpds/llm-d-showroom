@@ -439,6 +439,12 @@ image::grafana-model-pulldown.png[]
 Run the same benchmark you performed at the end of Module 2,
 now against the scaled deployment with our custom service:
 
+[WARNING]
+====
+**This benchmark takes approximately 10-12 minutes to complete.**
+The terminal may disconnect during long-running operations.
+====
+
 [.console-input]
 [source,bash]
 ----
@@ -466,6 +472,20 @@ EOF
 oc wait --for=jsonpath='{.status.ready}'=1 job/custom-benchmark-vllm-scaled
 oc logs -f job/custom-benchmark-vllm-scaled
 ----
+
+[TIP]
+====
+**If your terminal disconnects**, you can resume monitoring with:
+[source,bash]
+----
+oc logs -f job/custom-benchmark-vllm-scaled
+----
+To check if the job has completed:
+[source,bash]
+----
+oc get job custom-benchmark-vllm-scaled
+----
+====
 
 Example output (to start):
 

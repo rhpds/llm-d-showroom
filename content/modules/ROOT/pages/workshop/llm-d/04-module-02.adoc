@@ -154,6 +154,12 @@ spec:
 EOF
 ----
 
+[WARNING]
+====
+**This benchmark takes approximately 10 minutes to complete.**
+The terminal may disconnect during long-running operations.
+====
+
 Check the logs of the Job to monitor progress:
 
 [.console-input]
@@ -163,6 +169,20 @@ Check the logs of the Job to monitor progress:
 oc wait --for=jsonpath='{.status.ready}'=1 job/guidellm-vllm-single-sweep
 oc logs -f job/guidellm-vllm-single-sweep
 ----
+
+[TIP]
+====
+**If your terminal disconnects**, you can resume monitoring with:
+[source,bash]
+----
+oc logs -f job/guidellm-vllm-single-sweep
+----
+To check if the job has completed:
+[source,bash]
+----
+oc get job guidellm-vllm-single-sweep
+----
+====
 
 Example output (to start):
 
@@ -232,15 +252,6 @@ While the benchmark runs:
 
 === Analyze results
 
-[NOTE]
-====
-GuideLLM will take about ten minutes to complete the full benchmark suite.
-The terminal will hang while this happens.
-You may want to press `Enter` occasionally to prevent the Showroom environment from timing out.
-If you need to check the logs after your terminal times out, you can just rerun the following:
-`oc logs -f job/guidellm-vllm-single-sweep`
-====
-
 When complete, GuideLLM will output performance metrics including:
 
 * **Throughput**: Requests per second at various load levels
@@ -265,7 +276,13 @@ Our custom benchmark is already containerized, so we just need to run it the sam
 
 === Run the baseline customized benchmark
 
-Run a benchmark to establish your single-GPU baseline performance for our secnario:
+Run a benchmark to establish your single-GPU baseline performance for our scenario:
+
+[WARNING]
+====
+**This benchmark takes approximately 10-12 minutes to complete.**
+The terminal may disconnect during long-running operations.
+====
 
 [.console-input]
 [source,bash]
@@ -294,6 +311,20 @@ EOF
 oc wait --for=jsonpath='{.status.ready}'=1 job/custom-benchmark-vllm-single
 oc logs -f job/custom-benchmark-vllm-single
 ----
+
+[TIP]
+====
+**If your terminal disconnects**, you can resume monitoring with:
+[source,bash]
+----
+oc logs -f job/custom-benchmark-vllm-single
+----
+To check if the job has completed:
+[source,bash]
+----
+oc get job custom-benchmark-vllm-single
+----
+====
 
 Example output (to start):
 
