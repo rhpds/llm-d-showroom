@@ -158,6 +158,7 @@ EOF
 ====
 **This benchmark takes approximately 10 minutes to complete.**
 The terminal may disconnect during long-running operations.
+You may want to press `Enter` occasionally to prevent the Showroom environment from timing out.
 ====
 
 Check the logs of the Job to monitor progress:
@@ -282,6 +283,7 @@ Run a benchmark to establish your single-GPU baseline performance for our scenar
 ====
 **This benchmark takes approximately 10-12 minutes to complete.**
 The terminal may disconnect during long-running operations.
+You may want to press `Enter` occasionally to prevent the Showroom environment from timing out.
 ====
 
 [.console-input]

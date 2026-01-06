@@ -388,6 +388,7 @@ Run the same benchmark you performed in Modules 2 and 3, now against llm-d:
 ====
 **This benchmark takes approximately 5-6 minutes to complete** (faster than previous runs due to improved cache hit rates).
 The terminal may disconnect during long-running operations.
+You may want to press `Enter` occasionally to prevent the Showroom environment from timing out.
 ====
 
 [.console-input]

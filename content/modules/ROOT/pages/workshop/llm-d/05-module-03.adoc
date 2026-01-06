@@ -443,6 +443,7 @@ now against the scaled deployment with our custom service:
 ====
 **This benchmark takes approximately 10-12 minutes to complete.**
 The terminal may disconnect during long-running operations.
+You may want to press `Enter` occasionally to prevent the Showroom environment from timing out.
 ====
 
 [.console-input]
