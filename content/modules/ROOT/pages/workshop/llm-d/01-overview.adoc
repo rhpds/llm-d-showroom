@@ -29,14 +29,6 @@ The executive team wants data: **Can we scale without making our slowest users e
 
 Evaluate whether **llm-d** (an intelligent orchestration layer for distributed LLM inference) can solve ParasolCloud's tail latency problem.
 
-**Your specific tasks:**
-
-1. **Establish a baseline** - Measure current P95/P99 latency with single GPU vLLM
-2. **Test naive scaling** - Deploy 4 GPUs with round-robin load balancing and see if tail latency improves
-3. **Evaluate llm-d** - Deploy llm-d with cache-aware routing and measure P95/P99 improvements
-4. **Quantify customer impact** - Translate latency improvements into user experience gains
-5. **Build a recommendation** - Provide data-driven guidance on whether to adopt llm-d
-
 **Key question to answer**: Can llm-d deliver consistently low latency for all customers; especially the 5-10% currently experiencing the worst performance?
 
 == Why this matters
@@ -55,29 +47,3 @@ Without intelligent routing, each GPU operates independently with isolated KV ca
 **llm-d's promise**: Cache-aware routing that directs similar requests to the same backend, maximizing KV cache reuse and dramatically reducing P95/P99 latency.
 
 **Your job**: Prove whether this works for ParasolCloud's real-world workload.
-
-== What you'll deliver
-
-By the end of this workshop, you'll have:
-
-* **Baseline performance data** - Single GPU vLLM P95/P99 latency measurements
-* **Scaling analysis** - Multi-GPU deployment results showing whether naive scaling helps tail latency
-* **llm-d evaluation** - Cache-aware routing performance with quantified P95/P99 improvements
-* **Customer impact report** - Translation of latency metrics into user experience improvements
-* **Technical recommendation** - Data-driven decision on llm-d adoption for production
-
-== Success criteria
-
-You'll succeed if you can answer these questions with data:
-
-✓ What is ParasolCloud's current tail latency problem? (P95/P99 baseline)
-
-✓ Does adding more GPUs fix the problem? (Multi-GPU naive scaling results)
-
-✓ How much does llm-d improve the worst-case user experience? (P95/P99 reduction with cache-aware routing)
-
-✓ When does llm-d provide the most value? (Workload patterns that benefit from cache sharing)
-
-✓ Should ParasolCloud adopt llm-d for production? (ROI and deployment feasibility)
-
-Your recommendation needs to be **business-focused** ("this improves experience for our most frustrated customers") while backed by **rigorous technical benchmarks** (P50/P95/P99 latency data).

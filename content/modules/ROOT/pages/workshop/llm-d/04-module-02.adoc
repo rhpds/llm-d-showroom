@@ -263,17 +263,22 @@ An example would look like this:
 
 image::guidellm-single.png[]
 
-As of the time of writing, GuideLLM doesn't have good support for multi-turn benchmarks, but https://github.com/vllm-project/guidellm/issues/138[it is a work in progress].
 Take note of your P95 TTFT values, in particular. Some of them are quite high when highly concurrent, as we overloaded this vLLM instance.
-In order to better understand our options for our expected use cases at ParasolCloud, let's use a custom benchmark.
 
-== Exercise 3: Custom benchmarking
+== Exercise 3: Custom benchmarking for ParasolCloud
 
-We had irregular numbers of users, with very dissimilar use cases, reaching our production inference endpoint and causing KV cache evictions when load balancing against our production scaled inference cluster.
-Because of this, we created a custom benchmark with 11 different use case documents all asking different kinds of questions, and doing that in variable, irregular batch sizes with arbitrary delays to simulate user behavior.
-Our test environment has four replicas (or will in a minute...), so we'll use some numbers that aren't evenly divisible by four to cause a bit of a load balancing headache.
+GuideLLM is a popular and well-established LLM benchmarking tool—it's great for measuring raw throughput and understanding how your inference server behaves under synthetic load. However, it generates random prompts that don't reflect real-world usage patterns, and as of this writing, it doesn't fully support multi-turn conversations (though https://github.com/vllm-project/guidellm/issues/138[it's being worked on]).
 
-Our custom benchmark is already containerized, so we just need to run it the same way we ran the GuideLLM benchmarks.
+**ParasolCloud's actual workload looks very different:**
+
+* Customers use the AI chatbot for **multi-turn conversations** where each message builds on previous context
+* Users have **diverse use cases**—some ask about code, others about documents, financial reports, or technical specifications
+* Traffic arrives in **irregular bursts** with variable delays between messages
+* Multiple concurrent users means requests don't distribute evenly across replicas
+
+To accurately model this scenario, we're going to use a custom benchmark that simulates 11 different users, each with a unique seed document (code files, research papers, technical specs), conducting multi-turn conversations with realistic timing patterns.
+
+This custom benchmark is already containerized, so we can run it the same way we ran GuideLLM.
 
 === Run the baseline customized benchmark
 

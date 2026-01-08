@@ -12,7 +12,6 @@ Welcome to the llm-d workshop! In the next 2 hours, you'll gain hands-on experie
 This workshop assumes you already have:
 
 * **Experience with vLLM** - You understand how to deploy models and basic inference concepts
-* **LLM inference knowledge** - Familiar with metrics like TTFT, ITL, throughput, and KV cache
 * **Kubernetes/OpenShift skills** - Can work with kubectl/oc CLI, understand pods and services
 * **KServe familiarity** - Know what InferenceServices and ServingRuntimes are
 * **Grafana basics** - Can read dashboards and understand time-series metrics
@@ -43,7 +42,6 @@ Throughout the workshop, you'll work on a realistic business problem:
 * Evaluate scaling options
 * Benchmark naive scaling (more GPUs with round-robin load balancing)
 * Test llm-d with intelligent cache-aware routing
-* Provide recommendation with quantified ROI
 
 **Success Criteria**:
 
@@ -59,8 +57,6 @@ Throughout the workshop, you'll work on a realistic business problem:
 Your "average" latency might look great, but if 5% of users experience 10x worse response times, you have unhappy customers filing support tickets and churning.
 
 **This workshop focuses on reducing tail latency** because adding more GPUs improves capacity (throughput) but doesn't necessarily make your worst-case users any happier. You'll learn how intelligent routing can dramatically reduce P95 and P99 latency without adding hardware.
-
-Module 1 covers the technical details of what causes tail latency and how llm-d addresses it.
 
 == What you'll learn and demonstrate
 
@@ -94,7 +90,7 @@ Deploy your first model and understand what causes tail latency:
 * **KV cache sharing**: Why cache hits eliminate queuing and reduce P95
 * **llm-d capabilities**: Intelligent scheduling to reduce tail latency
 
-**Outcome**: Working model deployment and understanding that scaling for capacity ≠ scaling for latency.
+**Outcome**: Working model deployment.
 
 === Module 2: Benchmark & Establish Baseline (25 minutes)
 
@@ -168,19 +164,6 @@ Absolutely. llm-d is production-ready, and you'll leave with:
 **"What if my workload is different from the customer service example?"**
 
 The principles apply broadly. Module 4 includes exercises testing different workload patterns (high prefix similarity, low similarity, mixed). You'll understand when llm-d provides high value vs. moderate value.
-
-**"How technical is the ROI analysis?"**
-
-We balance technical depth with business clarity. You'll calculate GPU cost savings, latency improvements, and efficiency gains—then practice translating these into messaging for executives, engineers, and operations teams.
-
-**"What happens after the workshop?"**
-
-Module 5 provides:
-
-* Links to llm-d documentation and community resources
-* Next steps for production adoption (staging deployment, gradual rollout)
-* Advanced topics (prefill/decode disaggregation, MoE models)
-* Contact information for ongoing support
 
 == Ready to begin?
 
