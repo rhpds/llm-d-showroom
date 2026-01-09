@@ -440,7 +440,7 @@ We're going to run the same benchmark that we ran in module 2, but this time wit
 
 [WARNING]
 ====
-**This benchmark takes approximately 10-12 minutes to complete.**
+**This benchmark takes approximately 6-7 minutes to complete.**
 The terminal may disconnect during long-running operations.
 You may want to press `Enter` occasionally to prevent the Showroom environment from timing out.
 ====

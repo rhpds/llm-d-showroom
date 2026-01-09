@@ -4,3 +4,4 @@
 * xref:workshop/llm-d/04-module-02.adoc[Module 2: Benchmark & Establish Baseline]
 * xref:workshop/llm-d/05-module-03.adoc[Module 3: Scale vLLM & Compare Performance]
 * xref:workshop/llm-d/06-module-04.adoc[Module 4: Deploy llm-d & Benchmark]
+* xref:workshop/llm-d/07-conclusion.adoc[Conclusion]
