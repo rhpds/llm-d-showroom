@@ -312,69 +312,7 @@ Expected output:
 }
 ----
 
-== Exercise 2: Configure llm-d monitoring
-
-Before, we were using the ServiceMonitor that came out of the box with KServe. Right now, we need to tweak some things to get the metrics to scrape properly for our user-workload-monitoring instance.
-
-=== Create ServiceMonitor for llm-d router
-
-Create a ServiceMonitor to scrape the Endpoint Picker:
-
-[.console-input]
-[source,bash]
-----
-cat << 'EOF' | oc apply -f-
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  name: llm-d-router-metrics
-  labels:
-    monitoring.opendatahub.io/scrape: "true"
-spec:
-  selector:
-    matchLabels:
-      app.kubernetes.io/component: llminferenceservice-router-scheduler
-  namespaceSelector: {}
-  endpoints:
-    - port: metrics
-      path: /metrics
-      interval: 30s
-      scheme: https
-      tlsConfig:
-        insecureSkipVerify: true
-EOF
-----
-
-=== Create ServiceMonitor for llm-d inference pool
-
-Create a ServiceMonitor to scrape the vLLM instances:
-
-[.console-input]
-[source,bash]
-----
-cat << 'EOF' | oc apply -f-
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  name: llm-d-pool-metrics
-  labels:
-    monitoring.opendatahub.io/scrape: "true"
-spec:
-  selector:
-    matchLabels:
-      app.kubernetes.io/component: llminferenceservice-workload
-  namespaceSelector: {}
-  endpoints:
-    - port: https
-      path: /metrics
-      interval: 30s
-      scheme: https
-      tlsConfig:
-        insecureSkipVerify: true
-EOF
-----
-
-== Exercise 3: Run llm-d benchmarks
+== Exercise 2: Run llm-d benchmarks
 
 We're run the same scenario against llm-d to measure P95/P99 tail latency improvements from cache-aware routing.
 
@@ -438,6 +376,11 @@ oc get job custom-benchmark-llm-d
 ====
 
 While this runs, observe the Grafana dashboard.
+
+[NOTE]
+====
+You may need to refresh your browser to see the `llama-3-1-8b-instruct-fp8` model in the pulldown.
+====
 
 === Compare results
 

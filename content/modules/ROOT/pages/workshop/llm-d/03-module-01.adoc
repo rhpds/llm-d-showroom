@@ -220,7 +220,7 @@ The KV (Key-Value) cache is a memory optimization that stores intermediate atten
 
 **ParasolCloud's latency challenge**: Customer service queries share common system prompts and context. Without intelligent cache management:
 
-* Each request recomputes the same 300-token system prompt (wasted prefill time)
+* Each request recomputes the same large token system prompt (wasted prefill time)
 * Multi-turn conversations recompute entire context on every follow-up (unnecessary queuing)
 * Users with "unlucky" timing hit queues and experience high P95/P99 latency
 * Cache hits could eliminate this redundant work and reduce tail latency dramatically
