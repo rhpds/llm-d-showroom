@@ -16,7 +16,7 @@ The key insight: **more GPUs improve capacity, but intelligent routing improves 
 
 == When to use llm-d
 
-llm-d provides the most value when your workload has:
+Prefix-aware routing with llm-d provides the most value when your workload has:
 
 * Shared prefixes (system prompts, common contexts)
 * Multi-turn conversations with context reuse
