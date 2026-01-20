@@ -9,7 +9,7 @@ asciidoc:
   attributes:
     lab_name: "I'm the lab_name var"
     release-version: master
-    page-pagination: true
+    page-pagination: '@'
     my_var: "foo"
     guid: my-guid
     ssh_user: devops

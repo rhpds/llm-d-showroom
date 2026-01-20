@@ -12,7 +12,7 @@ In this module, you'll configure monitoring and run comprehensive benchmarks wit
 By the end of this module, you'll be able to:
 
 * Configure Grafana dashboard to collect vLLM performance metrics
-* Execute GuideLLM benchmarks to measure TTFT, ITL, and throughput
+* Execute GuideLLM benchmarks to measure TTFT, and ITL
 * Analyze results to identify single-instance performance limits
 
 == Exercise 1: Explore Grafana monitoring
@@ -24,14 +24,12 @@ Let's make sure it's up and recording data from our model server instance.
 
 === Explore vLLM metrics endpoint
 
-You should still have port-forwarding running from Module 1. If not, restart it:
+[NOTE]
+====
+You should still have port-forwarding running from Module 1. If it's no longer active, restart it with:
 
-[.console-input]
-[source,bash]
-----
-# Port forward to the pod (if not already running)
-oc port-forward deployment/llama-vllm-single-predictor 8080:8080 &
-----
+`oc port-forward deployment/llama-vllm-single-predictor 8080:8080 &`
+====
 
 vLLM exposes Prometheus metrics on its metrics port. Verify the service is exposing metrics:
 
@@ -171,6 +169,8 @@ oc wait --for=jsonpath='{.status.ready}'=1 job/guidellm-vllm-single-sweep
 oc logs -f job/guidellm-vllm-single-sweep
 ----
 
+Press `CTRL+C` when the job completes to return to the command prompt.
+
 [TIP]
 ====
 **If your terminal disconnects**, you can resume monitoring with:
@@ -245,7 +245,6 @@ While the benchmark runs:
 
 1. Open your vLLM Grafana dashboard
 2. Watch metrics in real-time:
-   * Request Throughput climbing to saturation
    * GPU Cache usage increasing sharply
    * The request queue will grow as the sweep ramps up
 3. Note the KV cache hit rates remain relatively low, probably around 11%
@@ -319,6 +318,8 @@ EOF
 oc wait --for=jsonpath='{.status.ready}'=1 job/custom-benchmark-vllm-single
 oc logs -f job/custom-benchmark-vllm-single
 ----
+
+Press `CTRL+C` when the job completes to return to the command prompt.
 
 [TIP]
 ====
