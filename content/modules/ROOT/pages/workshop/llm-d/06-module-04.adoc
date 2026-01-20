@@ -366,6 +366,8 @@ While the benchmark runs, tail the logs to monitor progress:
 oc logs -f job/custom-benchmark-llm-d
 ----
 
+Press `CTRL+C` when the job completes to return to the command prompt.
+
 [TIP]
 ====
 **If your terminal disconnects**, you can resume monitoring with:
