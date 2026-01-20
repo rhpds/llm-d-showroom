@@ -45,7 +45,7 @@ Throughout the workshop, you'll work on a realistic business problem:
 
 **Success Criteria**:
 
-* Achieve required throughput for client expansion
+* Achieve required service level objectives for client expansion
 * Minimize GPU investment
 * Improve latency for better customer experience
 * Deploy within 90-day timeline
@@ -97,7 +97,7 @@ Deploy your first model and understand what causes tail latency:
 Establish your tail latency baseline:
 
 * Configure Grafana dashboard for real-time latency metrics
-* Run GuideLLM benchmarks to measure throughput and latency
+* Run GuideLLM benchmarks to measure TTFT and latency
 * Run custom multi-turn benchmarks simulating realistic workloads
 * Measure P50, P95, P99 latency under load
 

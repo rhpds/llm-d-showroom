@@ -199,6 +199,11 @@ Check the endpoint to make sure it's behaving. Let's port-forward again:
 oc port-forward deployment/llama-vllm-scaled-predictor 8080:8080 &
 ----
 
+[NOTE]
+====
+Press **Enter** to get back to the command prompt after starting the port-forward.
+====
+
 Example output:
 
 [.console-output]
@@ -473,6 +478,8 @@ oc wait --for=jsonpath='{.status.ready}'=1 job/custom-benchmark-vllm-scaled
 oc logs -f job/custom-benchmark-vllm-scaled
 ----
 
+Press `CTRL+C` when the job completes to return to the command prompt.
+
 [TIP]
 ====
 **If your terminal disconnects**, you can resume monitoring with:
@@ -630,8 +637,7 @@ Improvement: _______ %
 
 **Capacity vs. Latency**:
 
-* Capacity (throughput): 4 GPUs = ~4x improvement ✅
-* Tail latency (P95): 4 GPUs = minimal or NO improvement ❌
+* Tail latency (P95): 4 GPUs = some improvement, but still an issue ❌
 
 **Why tail latency doesn't improve**:
 
