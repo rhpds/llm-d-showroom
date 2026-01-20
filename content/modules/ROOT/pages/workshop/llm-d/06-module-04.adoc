@@ -226,6 +226,11 @@ EOF
 * **`kv-cache-utilization-scorer`**: Optimizes cache memory usage (weight: 2)
 * **Plugin weights**: Higher weight = more influence on routing decisions
 
+[NOTE]
+====
+**Why these plugins and weights?** The llm-d scheduler supports https://github.com/llm-d/llm-d-inference-scheduler/blob/main/docs/architecture.md[many more plugins] including session affinity, load-aware scoring, and disaggregated prefill/decode filters. We chose this combination because **prefix-cache-scorer** (weight: 3) is our primary optimization target for reducing tail latency, while **queue-scorer** and **kv-cache-utilization-scorer** (both weight: 2) ensure load balancing and memory efficiency without overriding cache-locality decisions.
+====
+
 === Monitor deployment progress
 
 Watch the LLMInferenceService deployment:
