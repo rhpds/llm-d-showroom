@@ -25,6 +25,18 @@ This workshop assumes you already have:
 
 This workshop focuses on **distributed inference optimization**, not foundational concepts.
 
+== Accessing your environment
+
+You have been provided with an OpenShift cluster for this workshop. Use the following credentials to access the environment.
+
+=== OpenShift Console
+
+Open the OpenShift web console in your browser:
+
+* **Console URL:** {openshift_console_url}
+* **Username:** {openshift_cluster_admin_username}
+* **Password:** {openshift_cluster_admin_password}
+
 == Your ParasolCloud scenario
 
 Throughout the workshop, you'll work on a realistic business problem:

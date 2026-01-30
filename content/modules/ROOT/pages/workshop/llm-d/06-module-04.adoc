@@ -141,6 +141,8 @@ spec:
               - name: XDG_CACHE_HOME
                 value: /tmp
             args:
+              - '--cert-path'
+              - /var/run/kserve/tls
               - --pool-group
               - inference.networking.x-k8s.io
               - '--pool-name'

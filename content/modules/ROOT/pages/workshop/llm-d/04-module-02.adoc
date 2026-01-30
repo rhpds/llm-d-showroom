@@ -101,6 +101,12 @@ echo "https://$route/d/llm-performance/llm-d-performance-dashboard"
 
 Login with your OpenShift credentials.
 
+[NOTE]
+====
+* **Username:** {openshift_cluster_admin_username}
+* **Password:** {openshift_cluster_admin_password}
+====
+
 == Exercise 2: Run GuideLLM benchmarks
 
 Now establish your performance baseline by running comprehensive benchmarks with GuideLLM.
