@@ -13,13 +13,10 @@ Before deploying and benchmarking systems, you need to understand the technical 
 
 By the end of this module, you'll be able to:
 
-* Deploy a generative AI model using KServe and vLLM ServingRuntime in OpenShift AI
-* Identify the three bottlenecks causing high tail latency in LLM inference
-* Explain how KV cache sharing eliminates redundant computation and reduces P95/P99 latency
-* Understand why adding more GPUs improves capacity but not tail latency
-* Describe how llm-d's cache-aware routing maximizes cache hits
-* Recognize which workload scenarios benefit most from intelligent orchestration
-* Articulate the value proposition in customer experience terms
+* Deploy Llama 3.1 8B using KServe and vLLM on OpenShift AI
+* Explain the KV cache and why cache misses cause high P95/P99 latency
+* Understand why naive horizontal scaling doesn't fix tail latency
+* Describe how llm-d's prefix-cache-aware routing reduces P95/P99 latency
 
 == Quick start: Deploy your model (do this first!)
 
@@ -82,12 +79,14 @@ metadata:
 spec:
   annotations:
     prometheus.io/path: /metrics
-    prometheus.io/port: "8080"
+    prometheus.io/port: "8000"
   containers:
   - args:
-    - --port=8080
+    - --port=8000
     - --model=/mnt/models
     - --served-model-name={{.Name}}
+    - --max-model-len=16000
+    - --disable-uvicorn-access-log
     command:
     - python
     - -m
@@ -102,7 +101,7 @@ spec:
     image: registry.redhat.io/rhaiis/vllm-cuda-rhel9:3.2.4
     name: kserve-container
     ports:
-    - containerPort: 8080
+    - containerPort: 8000
       protocol: TCP
   multiModel: false
   supportedModelFormats:
@@ -142,17 +141,15 @@ spec:
       name: ''
       resources:
         limits:
-          cpu: '8'
-          memory: 16Gi
+          cpu: '4'
+          memory: 8Gi
           nvidia.com/gpu: '1'
         requests:
-          cpu: '2'
+          cpu: '4'
           memory: 8Gi
           nvidia.com/gpu: '1'
       runtime: rhaiis-cuda
       storageUri: 'oci://registry.redhat.io/rhelai1/modelcar-llama-3-1-8b-instruct-fp8-dynamic:1.5'
-      args:
-        - --max-model-len=65536
 EOF
 ----
 
@@ -225,66 +222,13 @@ The KV (Key-Value) cache is a memory optimization that stores intermediate atten
 * Users with "unlucky" timing hit queues and experience high P95/P99 latency
 * Cache hits could eliminate this redundant work and reduce tail latency dramatically
 
-== What causes high tail latency? The bottlenecks
+== What causes high tail latency?
 
-Before understanding how llm-d fixes tail latency, you need to understand what creates it.
+Three bottlenecks drive high P95/P99 latency in multi-GPU LLM deployments:
 
-=== Bottleneck 1: Prefill queuing (head-of-line blocking)
-
-**The problem**: Large prompts in the prefill queue block smaller requests from starting.
-
-**Scenario**: Single-turn requests with large system prompts
-
-* User A submits query with 2000-token system prompt at 10:00:00.000
-* User B submits query with 200-token prompt at 10:00:00.050 (50ms later)
-* User B must wait for User A's prefill to complete before their request starts
-* User A: TTFT = 800ms (normal for large prompt)
-* User B: TTFT = 1200ms (800ms waiting + 400ms processing) — **high P95 latency!**
-
-**Impact**: Unlucky users who submit requests during busy prefill periods experience high P95/P99 latency even though their own prompts are small.
-
-=== Bottleneck 2: KV cache misses (redundant computation)
-
-**The problem**: Requests with shared prefixes land on different vLLM instances, missing cache opportunities.
-
-**Scenario**: Multi-turn chat conversations
-
-* User conversation spread across multiple vLLM instances (round-robin load balancing)
-* Turn 1: Routes to GPU 1, computes full context (system prompt + history)
-* Turn 2: Routes to GPU 2, recomputes everything from scratch (cache miss)
-* Turn 3: Routes to GPU 3, recomputes everything again
-* Each turn wastes time recomputing the same shared context
-
-**Impact**: Multi-turn conversations experience unnecessarily high P95 latency because each turn starts from scratch instead of reusing cached context.
-
-=== Bottleneck 3: Unpredictable queuing variability
-
-**The problem**: Load balancing doesn't account for current request queue depth or prompt length distribution.
-
-**Scenario**: Peak traffic periods
-
-* Some vLLM instances accumulate long-running requests
-* New requests randomly routed to busy instances
-* Unlucky users hit deep queues → high P95/P99 latency
-* Lucky users hit idle instances → low latency
-
-**Impact**: Wide latency variance. P50 might be 200ms while P95 reaches 2000ms—a 10x difference.
-
-=== Two critical scenarios for ParasolCloud
-
-**Scenario 1: Single-turn requests with large shared prefixes**
-
-* Customer service queries all start with 300-token system prompt
-* Each query adds 100-200 tokens of user-specific question
-* **Problem**: Every request recomputes the same 300-token prefix
-* **P95 impact**: Prefill queuing causes high tail latency
-
-**Scenario 2: Multi-turn chat conversations**
-
-* Customer asks follow-up questions in ongoing conversation
-* Context grows with each turn: system prompt + turn 1 + turn 2 + ...
-* **Problem**: Each turn recomputes entire conversation history if cache misses occur
-* **P95 impact**: Cache misses dramatically increase tail latency for follow-ups
+* **Prefill queuing**: Large prompts block smaller requests from starting (head-of-line blocking). A user with a small prompt who submits just after a large-prompt request can experience 3x higher TTFT simply due to queuing.
+* **KV cache misses**: With round-robin routing, requests with shared prefixes land on different vLLM instances, forcing each to recompute the same system prompt or conversation history from scratch on every turn.
+* **Unpredictable queue depth**: Random routing ignores how busy each instance actually is. P50 latency may be 200ms while P95 reaches 2000ms—a 10x gap.
 
 === Key performance metrics for tail latency
 
@@ -318,12 +262,6 @@ Now that you understand the bottlenecks, here are the metrics you'll use to meas
 |Requests processed per second
 |Capacity metric. Secondary to latency for customer experience.
 |===
-
-**ParasolCloud's latency goals**:
-
-* P95 TTFT < 300ms (currently experiencing 800-1200ms during peaks)
-* P99 TTFT < 500ms (currently experiencing 1500-2000ms during peaks)
-* Reduce tail latency without massive GPU investment
 
 == Introducing llm-d: Distributed inference orchestration
 
@@ -412,42 +350,6 @@ llm-d is a distributed inference orchestration layer that sits above multiple vL
 
 **P95 latency impact**: Eliminates cache misses, reducing P95/P99 TTFT by 40-60% for workloads with shared prefixes or multi-turn conversations.
 
-=== Core capability 2: Prefill/Decode disaggregation
-
-**The problem**: Prefill (parallel) and decode (sequential) compete for GPU resources on same instance, reducing efficiency.
-
-**llm-d's solution**:
-
-* Separate vLLM instances specialized for prefill or decode
-* Prefill instances handle prompt processing (high compute)
-* Decode instances handle token generation (high memory bandwidth)
-* KV cache transferred between instances
-
-**Benefits**:
-
-* Prefill instances can use larger batch sizes
-* Decode instances optimize for low latency
-* Better GPU utilization per phase
-
-**When it helps**: Large batches, long contexts, latency-sensitive applications.
-
-**ParasolCloud's scenario**: Customer service queries have moderate prefixes (200-500 tokens) and short responses (50-200 tokens). Precise Prefix Cache Aware Routing provides more value than disaggregation for this workload. Disaggregation becomes critical for longer contexts (4K+ tokens).
-
-=== Core capability 3: Wide expert parallelism (for MoE models)
-
-**The problem**: Mixture of Experts (MoE) models like DeepSeek R1 have many expert networks. Standard tensor parallelism splits experts across devices, creating communication bottlenecks.
-
-**llm-d's solution - Expert Parallelism + Data Parallelism**:
-
-* Distribute complete experts across devices (EP)
-* Replicate token batches for data parallelism (DP)
-* Reduce inter-device communication
-* Scale efficiently to 100+ experts
-
-**When it helps**: MoE models with many experts (DeepSeek R1, Mixtral, Grok).
-
-**ParasolCloud's scenario**: Starting with dense models (Llama 3.1). Wide expert parallelism becomes relevant when evaluating MoE models for cost efficiency.
-
 == Comparing naive scaling vs. llm-d
 
 [cols="3,4,4", options="header"]
@@ -519,7 +421,7 @@ Port-forward to the instance and test it:
 [source,bash]
 ----
 # Port forward to the pod
-oc port-forward deployment/llama-vllm-single-predictor 8080:8080 &
+oc port-forward deployment/llama-vllm-single-predictor 8000:8000 &
 ----
 
 [NOTE]
@@ -533,7 +435,7 @@ Check the models endpoint:
 [source,bash]
 ----
 # Check the list of models
-curl http://localhost:8080/v1/models | jq .
+curl http://localhost:8000/v1/models | jq .
 ----
 
 Example output:
@@ -564,7 +466,7 @@ Now test inference:
 [source,bash]
 ----
 # Send a test request to the model
-curl http://localhost:8080/v1/completions \
+curl http://localhost:8000/v1/completions \
   -H "Content-Type: application/json" \
   -d '{
     "model": "llama-vllm-single",
@@ -600,54 +502,23 @@ Your single vLLM instance is up and running successfully!
 
 [NOTE]
 ====
-Keep the port-forward running—you'll need it in the next module for benchmarking.
+Keep the port-forward running—you'll need it in the next module to verify the metrics endpoint.
 ====
 
 == Module 1 summary
 
-You've completed the conceptual foundation for understanding and reducing tail latency in LLM inference, and deployed your first model.
-
 **What you accomplished:**
 
-* Deployed Llama 3.1 8B Instruct using KServe and vLLM on a single GPU
+* Deployed Llama 3.1 8B Instruct on a single GPU using KServe and vLLM
 * Verified the model is serving requests correctly
-
-**What you learned:**
-
-* **Tail latency (P95/P99)** represents the experience of your most frustrated users
-* **Three main bottlenecks** cause high tail latency:
-  - Prefill queuing (head-of-line blocking from large prompts)
-  - KV cache misses (redundant computation on every request)
-  - Unpredictable queuing variability (unlucky routing to busy instances)
-* **Two critical scenarios** reveal tail latency problems:
-  - Single-turn requests with large shared prefixes
-  - Multi-turn chat conversations requiring KV cache reuse
-* **llm-d's cache-aware routing** eliminates redundant computation by directing similar requests to the same vLLM instance
 
 **Key takeaways:**
 
-* **More GPUs ≠ better P95/P99**: Naive scaling increases capacity but doesn't reduce tail latency
-* **Cache hits reduce P95 latency**: 70% cache hit rate eliminates 70% of redundant prefill work
-* **Intelligent routing attacks tail latency directly**: Routes requests to maximize cache reuse
-* **Customer experience focus**: Improving P95/P99 means improving experience for your most frustrated users
-
-**ParasolCloud's tail latency opportunity:**
-
-* Customer service workload has 300-token system prompt shared across queries
-* Multi-turn conversations currently recompute entire history on each turn
-* Expected 60-80% cache hit rate with llm-d → Dramatically reduced P95/P99 TTFT
-* Goal: Reduce P95 TTFT from 800-1200ms to <300ms
-
-**Understanding the difference:**
-
-* **Scaling for capacity**: Add more GPUs → More requests/second
-* **Scaling for latency**: Intelligent cache-aware routing → Faster responses for worst-case users
+* P95/P99 TTFT represents the experience of your most frustrated users
+* Three bottlenecks drive tail latency: prefill queuing, KV cache misses, and unpredictable queue depth
+* More GPUs increase capacity but do **not** reduce tail latency—cache misses still occur with round-robin routing
+* llm-d's prefix-cache-aware routing routes similar requests to the same instance, eliminating redundant prefill computation and reducing P95/P99 TTFT
 
 **Next steps:**
 
-Module 2 will establish your **tail latency baseline** by running comprehensive benchmarks on your deployed model across two scenarios:
-
-1. **Single-turn large prompts** - Measuring prefill bottleneck impact on P95
-2. **Multi-turn chat** - Measuring cache miss impact on conversation latency
-
-You'll measure P50, P95, and P99 latency to understand what your most frustrated users currently experience.
+Module 2 runs a short illustrative GuideLLM benchmark against this single GPU to observe queue saturation under high concurrency.
