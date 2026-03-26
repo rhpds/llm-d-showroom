@@ -1,19 +1,18 @@
-= Module 2: Benchmark & Establish Baseline
+= Module 2: Observe Single-GPU Behaviour
 :source-highlighter: rouge
 :toc: macro
 :toclevels: 2
 
-Now it's time to establish your performance baseline. Before evaluating llm-d's improvements, you need quantifiable metrics from your single-GPU vLLM deployment.
-
-In this module, you'll configure monitoring and run comprehensive benchmarks with GuideLLM to measure your baseline performance.
+In this module you'll look at the vLLM metrics endpoint, open the Grafana dashboard, and run a short illustrative benchmark to see how a single GPU handles high concurrency.
+These results are for observation only—the comparison benchmarks run in Modules 3 and 4.
 
 == Learning objectives
 
 By the end of this module, you'll be able to:
 
-* Configure Grafana dashboard to collect vLLM performance metrics
-* Execute GuideLLM benchmarks to measure TTFT, and ITL
-* Analyze results to identify single-instance performance limits
+* Locate vLLM Prometheus metrics and the Grafana dashboard
+* Run a GuideLLM benchmark against a single-GPU deployment
+* Observe queue saturation under concurrent load
 
 == Exercise 1: Explore Grafana monitoring
 
@@ -24,20 +23,20 @@ Let's make sure it's up and recording data from our model server instance.
 
 === Explore vLLM metrics endpoint
 
+vLLM exposes Prometheus metrics on its metrics port. Verify the service is exposing metrics:
+
 [NOTE]
 ====
-You should still have port-forwarding running from Module 1. If it's no longer active, restart it with:
+Your port-forward from Module 1 should still be running. If it's no longer active, restart it with:
 
-`oc port-forward deployment/llama-vllm-single-predictor 8080:8080 &`
+`oc port-forward deployment/llama-vllm-single-predictor 8000:8000 &`
 ====
-
-vLLM exposes Prometheus metrics on its metrics port. Verify the service is exposing metrics:
 
 [.console-input]
 [source,bash]
 ----
 # Fetch metrics
-curl http://localhost:8080/metrics | grep vllm | head -40
+curl http://localhost:8000/metrics | grep vllm | head -40
 ----
 
 You should see a lot of vLLM-specific metrics, including:
@@ -52,36 +51,6 @@ You should see a lot of vLLM-specific metrics, including:
 ----
 # Stop port-forward when ready
 pkill -f "port-forward"
-----
-
-Expected output:
-
-[.console-output]
-[source,bash]
-----
-[1]+  Terminated              oc port-forward deployment/llama-vllm-single-predictor 8080:8080
-----
-
-=== Verify ServiceMonitor configuration
-
-To collect vLLM metrics in Prometheus, we need to enable OpenShift User Workload Monitoring and create a ServiceMonitor.
-Your lab clusters have already had User Workload Monitoring enabled
-(see https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/monitoring/configuring-user-workload-monitoring[the OpenShift documentation] on the topic),
-and OpenShift AI creates the ServiceMonitor for KServe InferenceServices for you. Ensure you see it in your environment:
-
-[.console-input]
-[source,bash]
-----
-oc get servicemonitor llama-vllm-single-metrics
-----
-
-Example output:
-
-[.console-output]
-[source,bash]
-----
-NAME                        AGE
-llama-vllm-single-metrics   8m
 ----
 
 === Access Grafana dashboard
@@ -107,72 +76,108 @@ Login with your OpenShift credentials.
 * **Password:** {openshift_cluster_admin_password}
 ====
 
-== Exercise 2: Run GuideLLM benchmarks
+== Exercise 2: Run GuideLLM benchmark
 
-Now establish your performance baseline by running comprehensive benchmarks with GuideLLM.
-We'll be using a Job on OpenShift to make sure that our containerized GuideLLM implementation is consistent.
+Now establish your performance baseline by running GuideLLM with a KV-cache-aware prompts file.
+Unlike synthetic random prompts, this dataset contains carefully constructed prompts sized to 80% of the model's KV cache capacity, with each prompt repeated multiple times.
+This workload is designed to produce high cache hit rates when requests are routed intelligently—making it ideal for comparing vLLM versus llm-d.
 
-=== Run baseline benchmark
+=== Understand the benchmark data
 
-Run a benchmark to establish your single-GPU baseline performance:
+Your lab environment has a pre-provisioned PVC (`benchmark-data`) containing a `prompts.csv` file.
+
+Verify the PVC and data are available:
 
 [.console-input]
 [source,bash]
 ----
-# Run baseline benchmark with sweep profile
-cat << EOF | oc apply -f-
+# Verify the benchmark-data PVC exists
+oc get pvc benchmark-data
+
+# Check the prompts file is present
+oc run check-data --image=registry.access.redhat.com/ubi9/ubi-minimal:latest \
+  --restart=Never --rm -it \
+  --overrides='{"spec":{"volumes":[{"name":"data","persistentVolumeClaim":{"claimName":"benchmark-data"}}],"containers":[{"name":"check-data","image":"registry.access.redhat.com/ubi9/ubi-minimal:latest","command":["sh","-c","wc -l /data/prompts.csv && head -1 /data/prompts.csv"],"volumeMounts":[{"name":"data","mountPath":"/data"}]}]}}' \
+  -- sh
+----
+
+You should see the number of rows in the CSV and the header line showing `prompt,output_tokens_count` columns.
+
+=== Run the benchmark
+
+This is a short, illustrative run—just 30 seconds per concurrency level—to show how a single GPU handles a large volume of concurrent requests.
+We are not collecting these results for later comparison; that happens in Module 3 with 4 replicas running a full 300-second benchmark.
+The goal here is simply to observe what happens when one GPU gets overloaded.
+
+[.console-input]
+[source,bash]
+----
+cat << 'EOF' | oc apply -f-
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: guidellm-vllm-single-sweep
+  name: guidellm-vllm-single
 spec:
-  backoffLimit: 4
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
   template:
     spec:
-      serviceAccountName: default
       restartPolicy: Never
       containers:
         - name: guidellm
-          image: ghcr.io/vllm-project/guidellm:v0.4.0
-          imagePullPolicy: IfNotPresent
-          command:
-            - /opt/app-root/bin/guidellm
-          args:
-            - benchmark
-            - run
-            - --target=http://llama-vllm-single-predictor:8080
-            - --profile=sweep
-            - --max-seconds=30
-            - --processor=RedHatAI/Meta-Llama-3.1-8B-Instruct-FP8-dynamic
-            - --data=prompt_tokens=256,output_tokens=128
+          image: ghcr.io/vllm-project/guidellm:latest
+          env:
+            - name: GUIDELLM_TARGET
+              value: "http://llama-vllm-single-predictor:8000/v1"
+            - name: GUIDELLM_PROFILE
+              value: concurrent
+            - name: GUIDELLM_RATE
+              value: "32,64"
+            - name: GUIDELLM_OUTPUTS
+              value: json,csv
+            - name: GUIDELLM_MAX_SECONDS
+              value: "30"
+            - name: GUIDELLM_DATA
+              value: "/data/prompts.csv"
+            - name: GUIDELLM_PROCESSOR
+              value: "RedHatAI/Meta-Llama-3.1-8B-Instruct-FP8-dynamic"
+            - name: HF_HOME
+              value: /tmp/hf-cache
+            - name: TRANSFORMERS_CACHE
+              value: /tmp/hf-cache
+            - name: XDG_CACHE_HOME
+              value: /tmp
           volumeMounts:
-            - name: home
-              mountPath: /home/guidellm
+            - name: cache
+              mountPath: /tmp/hf-cache
             - name: results
               mountPath: /results
+            - name: data
+              mountPath: /data
+              readOnly: true
       volumes:
-        - name: home
+        - name: cache
           emptyDir: {}
         - name: results
           emptyDir: {}
+        - name: data
+          persistentVolumeClaim:
+            claimName: benchmark-data
 EOF
 ----
 
 [WARNING]
 ====
-**This benchmark takes approximately 5 minutes to complete.**
-The terminal may disconnect during long-running operations.
-You may want to press `Enter` occasionally to prevent the Showroom environment from timing out.
+**This benchmark takes approximately 3 minutes to complete** (30 seconds per concurrency level).
 ====
 
-Check the logs of the Job to monitor progress:
+Follow the benchmark logs:
 
 [.console-input]
 [source,bash]
 ----
-# Follow the Job logs
-oc wait --for=jsonpath='{.status.ready}'=1 job/guidellm-vllm-single-sweep
-oc logs -f job/guidellm-vllm-single-sweep
+oc wait --for=condition=ready pod -l job-name=guidellm-vllm-single --timeout=120s
+oc logs -f job/guidellm-vllm-single
 ----
 
 Press `CTRL+C` when the job completes to return to the command prompt.
@@ -182,298 +187,62 @@ Press `CTRL+C` when the job completes to return to the command prompt.
 **If your terminal disconnects**, you can resume monitoring with:
 [source,bash]
 ----
-oc logs -f job/guidellm-vllm-single-sweep
+oc logs -f job/guidellm-vllm-single
 ----
 To check if the job has completed:
 [source,bash]
 ----
-oc get job guidellm-vllm-single-sweep
+oc get job guidellm-vllm-single
 ----
 ====
-
-Example output (to start):
-
-[.console-output]
-[source,bash]
-----
-job.batch/guidellm-vllm-single-sweep created
-job.batch/guidellm-vllm-single-sweep condition met
-✔ OpenAIHTTPBackend backend validated with model llama-vllm-single
-  {'target':
-  'https://llama-vllm-single-llm-d-project.apps.cluster-fnj7b.fnj7b.sandbox5571.
-  opentlc.com', 'model': None, 'timeout': 60.0, 'http2': True,
-  'follow_redirects': True, 'verify': False, 'openai_paths': {'health':
-  'health', 'models': 'v1/models', 'text_completions': 'v1/completions',
-  'chat_completions': 'v1/chat/completions', 'audio_transcriptions':
-  'v1/audio/transcriptions', 'audio_translations': 'v1/audio/translations'},
-  'validate_backend': {'method': 'GET', 'url':
-  'https://llama-vllm-single-llm-d-project.apps.cluster-fnj7b.fnj7b.sandbox5571.
-  opentlc.com/health'}}
-✔ Processor resolved
-  Using processor 'RedHatAI/Meta-Llama-3.1-8B-Instruct-FP8-dynamic'
-✔ Request loader initialized with inf unique requests
-  {'data': "['prompt_tokens=256,output_tokens=128']", 'data_args': '[]',
-  'data_samples': -1, 'preprocessors': ['GenerativeColumnMapper',
-  'GenerativeChatCompletionsRequestFormatter'], 'collator':
-  'GenerativeRequestCollator', 'sampler': 'None', 'num_workers': 1,
-  'random_seed': 42}
-✔ Resolved transient phase configurations
-  Warmup: percent=None value=None mode='prefer_duration'
-  Cooldown: percent=None value=None mode='prefer_duration'
-  Rampup (Throughput/Concurrent): 0.0
-✔ SweepProfile profile resolved
-  {'str': "type_='sweep' completed_strategies=[] constraints={'max_seconds':
-  60.0} rampup_duration=0.0 sweep_size=10 strategy_type='constant'
-  max_concurrency=None random_seed=42 synchronous_rate=-1.0 throughput_rate=-1.0
-  async_rates=[] measured_rates=[] strategy_types=['synchronous', 'throughput',
-  'constant', 'constant', 'constant', 'constant', 'constant', 'constant',
-  'constant', 'constant']", 'type': 'SweepProfile', 'class': 'SweepProfile',
-  'module': 'guidellm.benchmark.profiles', 'attributes': {'type_': 'sweep',
-  'completed_strategies': [], 'constraints': {'max_seconds': 60.0},
-  'rampup_duration': 0.0, 'sweep_size': 10, 'strategy_type': 'constant',
-  'max_concurrency': 'None', 'random_seed': 42, 'synchronous_rate': -1.0,
-  'throughput_rate': -1.0, 'async_rates': [], 'measured_rates': []}}
-✔ Output formats resolved
-  {'json': "output_path=PosixPath('/results/benchmarks.json')"}
-✔ Setup complete, starting benchmarks...
-----
-
-**What this benchmark does**:
-
-* `--profile=sweep`: Runs multiple load levels to find saturation point
-* `--max-seconds=30`: Runs for 30 seconds per load level
-* `--processor`: Specifies the HuggingFace repository with the tokenizer configuration for accurate token counting
-* `--data`: Generates synthetic prompts with 256 input tokens and 128 output tokens
 
 === Monitor in Grafana
 
-While the benchmark runs:
+While the benchmark runs, open your Grafana dashboard and watch:
 
-1. Open your vLLM Grafana dashboard
-2. Watch metrics in real-time:
-   * GPU Cache usage increasing sharply
-   * The request queue will grow as the sweep ramps up
-3. Note the KV cache hit rates remain relatively low, probably around 11%
-   * This is because the benchmark we are using is synthetically generating random text for the prompts, and so most of the requests are not taking advantage of the amount of cache we have on this instance.
-
-=== Analyze results
-
-When complete, GuideLLM will output performance metrics including:
-
-* **Throughput**: Requests per second at various load levels
-* **TTFT (Time to First Token)**: P50, P95, P99 latencies
-* **ITL (Inter-Token Latency)**: Token generation speed
-
-An example would look like this:
-
-image::guidellm-single.png[]
-
-Take note of your P95 TTFT values, in particular. Some of them are quite high when highly concurrent, as we overloaded this vLLM instance.
-
-== Exercise 3: Custom benchmarking for ParasolCloud
-
-GuideLLM is a popular and well-established LLM benchmarking tool—it's great for measuring raw throughput and understanding how your inference server behaves under synthetic load. However, it generates random prompts that don't reflect real-world usage patterns, and as of this writing, it doesn't fully support multi-turn conversations (though https://github.com/vllm-project/guidellm/issues/138[it's being worked on]).
-
-**ParasolCloud's actual workload looks very different:**
-
-* Customers use the AI chatbot for **multi-turn conversations** where each message builds on previous context
-* Users have **diverse use cases**—some ask about code, others about documents, financial reports, or technical specifications
-* Traffic arrives in **irregular bursts** with variable delays between messages
-* Multiple concurrent users means requests don't distribute evenly across replicas
-
-To accurately model this scenario, we're going to use a custom benchmark that simulates 11 different users, each with a unique seed document (code files, research papers, technical specs), conducting multi-turn conversations with realistic timing patterns.
-
-This custom benchmark is already containerized, so we can run it the same way we ran GuideLLM.
-
-=== Run the baseline customized benchmark
-
-Run a benchmark to establish your single-GPU baseline performance for our scenario:
-
-[WARNING]
-====
-**This benchmark takes approximately 5-6 minutes to complete.**
-The terminal may disconnect during long-running operations.
-You may want to press `Enter` occasionally to prevent the Showroom environment from timing out.
-====
-
-[.console-input]
-[source,bash]
-----
-# Create the benchmark job
-cat << EOF | oc apply -f-
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: custom-benchmark-vllm-single
-spec:
-  backoffLimit: 4
-  template:
-    spec:
-      serviceAccountName: default
-      restartPolicy: Never
-      containers:
-        - name: benchmark
-          image: quay.io/hayesphilip/multi-turn-benchmark:0.0.1
-          args:
-            - http://llama-vllm-single-predictor:8080/v1
-            - --parallel=9
-            - --turns=5
-            - -v
-EOF
-
-oc wait --for=jsonpath='{.status.ready}'=1 job/custom-benchmark-vllm-single
-oc logs -f job/custom-benchmark-vllm-single
-----
-
-Press `CTRL+C` when the job completes to return to the command prompt.
-
-[TIP]
-====
-**If your terminal disconnects**, you can resume monitoring with:
-[source,bash]
-----
-oc logs -f job/custom-benchmark-vllm-single
-----
-To check if the job has completed:
-[source,bash]
-----
-oc get job custom-benchmark-vllm-single
-----
-====
-
-Example output (to start):
-
-[.console-output]
-[source,bash]
-----
-job.batch/custom-benchmark-vllm-single created
-job.batch/custom-benchmark-vllm-single condition met
-================================================================================
-Multi-Turn Conversation Benchmark (Seed Documents)
-================================================================================
-Target URL: https://llama-vllm-single-predictor:8080/v1
-Seed documents directory: /opt/app-root/src/seed-documents
-Conversations: 11
-Turns per conversation: 5
-Max tokens per response: 500
-Parallel workers: 9
-Request delay range: 0.5s - 2.0s
-================================================================================
-
-Loading seed documents...
-  Loaded: 01-python-ecommerce.py (CODE, 24,572 chars)
-  Loaded: 02-distributed-systems-whitepaper.md (TEXT, 13,841 chars)
-  Loaded: 03-kubernetes-controller.go (CODE, 20,255 chars)
-  Loaded: 04-machine-learning-research.md (TEXT, 12,065 chars)
-  Loaded: 05-rust-async-runtime.rs (CODE, 22,646 chars)
-  Loaded: 06-financial-analysis.md (TEXT, 13,827 chars)
-  Loaded: 07-react-dashboard.tsx (CODE, 50,345 chars)
-  Loaded: 08-medical-research.md (TEXT, 20,320 chars)
-  Loaded: 09-database-schema.sql (CODE, 47,346 chars)
-  Loaded: 10-water-treatment.md (TEXT, 29,230 chars)
-  Loaded: 11-compiler-design.md (TEXT, 55,362 chars)
-
-Loaded 11 seed documents
-  Code documents: 5
-  Text documents: 6
-✓ Found model: llama-vllm-single
-
-Initialized 11 conversations
-
-================================================================================
-WARM-UP PHASE
-================================================================================
-----
-
-=== Make observations during the benchmark pass
-
-This benchmark will take about 5 minutes to complete again.
-One of the things you should be able to notice, while monitoring the Grafana dashboard as it runs,
-is that as the request queue piles up, the TTFT and E2E latencies climb significantly.
-Right now, we're simulating 11 users worth of simultaneous multi-turn chat with a diverse set of use cases.
-We have a single instance of our model up right now, and it's struggling to keep up with the load.
-Another thing you should notice is that your KV cache hit rates start to climb a bit, compared to the GuideLLM benchmark.
-Because we're doing multi-turn chat, our new messages contain the chat history and this is resulting in a KV cache hit.
+1. **TTFT metrics**: Watch how P95 latency climbs at concurrency 64 vs 32
+2. **KV cache hit rate**: With random round-robin routing, cache hits are low even with repeated prompts
+3. **GPU utilization**: The single GPU will saturate quickly at high concurrency
 
 image::benchmark-dashboard-single.png[]
 
-Keep an eye on the kinds of prompts that the benchmark is sending, and make some observations about the dashboard state while it goes.
+=== Observe the results
 
-When it's finished, you should get a results summary like this:
+Focus on the **`ℹ Request Latency Statistics (Completed Requests)`** section—specifically the `TTFT` and `Request Latency` columns.
+Both the median and p95 TTFT are very high: the single GPU is already deeply queued within the first 30 seconds.
+
+Example output:
 
 [.console-output]
 [source,bash]
 ----
-================================================================================
-BENCHMARK SUMMARY
-================================================================================
-
-Total time: 284.37s
-Total requests: 55
-Completed conversations: 11/11
-Requests per second: 0.19
-
-Time to First Token (TTFT):
-  Min:        125.24 ms
-  Max:      10168.75 ms
-  Mean:      1852.02 ms
-  P50:       1144.39 ms
-  P95:       8249.47 ms
-  P99:      10168.75 ms
-
-Total Request Time:
-  Min:      19656.71 ms
-  Max:      54680.32 ms
-  Mean:     43131.79 ms
-  P50:      45244.69 ms
-  P95:      54501.77 ms
-
-TTFT by Turn Number:
-  Turn  1:    5173.23 ms avg (11 requests)
-  Turn  2:     172.30 ms avg (11 requests)
-  Turn  3:     544.71 ms avg (11 requests)
-  Turn  4:    1407.00 ms avg (11 requests)
-  Turn  5:    1962.88 ms avg (11 requests)
-
-TTFT by Document Type:
-  CODE:      2126.67 ms avg (25 requests)
-  TEXT:      1623.15 ms avg (30 requests)
-
-First Turn vs Subsequent Turns (Prefix Caching Indicator):
-  First turn avg:     5173.23 ms
-  Later turns avg:    1021.72 ms
-  Speedup ratio:         5.06x
-
-================================================================================
+ℹ Request Latency Statistics (Completed Requests)
+|============|=========|========|========|========|=======|=======|=======|=======|
+| Benchmark  | Request Latency || TTFT           || ITL          || TPOT         ||
+| Strategy   | Sec             || ms             || ms           || ms           ||
+|            | Mdn     | p95    | Mdn    | p95    | Mdn   | p95   | Mdn   | p95   |
+|------------|---------|--------|--------|--------|-------|-------|-------|-------|
+| concurrent | 41.3    | 41.3   | 1691.2 | 1691.2 | 159.2 | 159.2 | 165.3 | 165.3 |
+| concurrent | 30.3    | 30.3   | 284.5  | 284.8  | 120.5 | 120.5 | 121.1 | 121.1 |
+|============|=========|========|========|========|=======|=======|=======|=======|
 ----
 
-=== Analyze the results
-
-In particular, the most interesting numbers for today's exercise are in the P95 TTFT and Total request time (E2E latency). Record these for later.
-You can see that we didn't get a speedup on the later turns, despite hitting KV cache, because our instance was too overloaded to deal with it.
-
-Let's move on to the next module, where we'll look at deploying four naive vLLM replicas that we will load balance against to get an idea of how our hardware enables scale.
+These numbers are erratic and very high—requests are queuing behind each other's long prefill computations.
+We won't carry these forward for comparison. Module 3 scales to 4 replicas and runs a proper 300-second benchmark.
 
 == Module 2 summary
 
 **What you accomplished:**
 
-* Evaluated Grafana monitoring for vLLM metrics
-* Ran GuideLLM benchmark to establish baseline performance, confirming fast and efficient inference with Red Hat AI Inference Server
-* Ran a custom benchmarking suite, designed to better model ParasolCloud's expected use cases, to measure P95 TTFT under load
+* Explored Grafana monitoring for vLLM metrics
+* Ran a short illustrative GuideLLM benchmark against a single GPU to observe queue saturation
 
 **Key takeaways:**
 
-* Single GPU has limited capacity before latency degrades
-* Tail latency (P95) degrades significantly when approaching saturation
-* vLLM metrics in Grafana provide real-time performance visibility
-* Your most frustrated users (P95) experience significantly higher latency than mean
-
-**ParasolCloud's baseline:**
-
-* Record your multi-turn benchmark's P95 TTFT - you'll compare this in later modules
-* Key question: Will our tail latency be suitable for our users when we throw more GPUs at the problem?
+* A single GPU saturates quickly at high concurrency—latency becomes erratic and very high
+* This was illustrative only: the short run duration means the numbers are not statistically meaningful for comparison
+* The proper comparison benchmarks (300 seconds each) begin in Module 3
 
 **Next steps:**
 
-Module 3 will scale your vLLM deployment to 4 GPUs using naive horizontal scaling.
+Module 3 scales to 4 replicas and runs a proper 300-second benchmark. Those results are what you will compare against llm-d in Module 4.

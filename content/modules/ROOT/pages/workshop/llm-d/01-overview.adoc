@@ -29,21 +29,23 @@ The executive team wants data: **Can we scale without making our slowest users e
 
 Evaluate whether **llm-d** (an intelligent orchestration layer for distributed LLM inference) can solve ParasolCloud's tail latency problem.
 
-**Key question to answer**: Can llm-d deliver consistently low latency for all customers; especially the 5-10% currently experiencing the worst performance?
+**Key question to answer**: Can llm-d deliver consistently low latency—especially for the 5-10% of users currently experiencing the worst performance?
 
 == Why this matters
 
-ParasolCloud's current challenge reflects a common problem in production LLM deployments:
+ParasolCloud's challenge reflects a common problem in production LLM deployments:
 
-* **Adding more GPUs improves capacity** (you can handle more requests)
-* **But it doesn't necessarily improve tail latency** (your worst-case users don't get faster responses)
+* **Adding more GPUs improves capacity** (more requests per second)
+* **But it doesn't improve tail latency** (your worst-case users don't get faster responses)
 
-Without intelligent routing, each GPU operates independently with isolated KV caches. Similar requests hitting different GPUs repeat the same computation work, causing:
+Without intelligent routing, each GPU maintains its own isolated KV cache. Similar requests landing on different GPUs repeat the same prefill computation, causing unpredictable P95/P99 latency spikes.
 
-* Unpredictable response times for users during peak hours
-* Wasted prefill computation for multi-turn conversations
-* Poor experience for customers with complex queries
+**llm-d's promise**: Prefix-cache-aware routing that directs similar requests to the same backend, maximizing KV cache reuse and reducing P95/P99 TTFT.
 
-**llm-d's promise**: Cache-aware routing that directs similar requests to the same backend, maximizing KV cache reuse and dramatically reducing P95/P99 latency.
+**The workshop approach**:
 
-**Your job**: Prove whether this works for ParasolCloud's real-world workload.
+* **Module 2**: Short 30-second run on a single GPU—illustrative, not for comparison
+* **Module 3**: Full 300-second run on 4 GPUs with naive round-robin routing—your comparison baseline
+* **Module 4**: Full 300-second run on the same 4 GPUs with llm-d routing—measure the P95 TTFT improvement
+
+**Your job**: Generate the data and compare the numbers.

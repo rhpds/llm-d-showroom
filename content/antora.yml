@@ -16,6 +16,9 @@ asciidoc:
     ssh_password: devops
     ssh_command: ssh someone@example.com
     openshift_cluster_ingress_domain: PLACEHOLDER-URL.com
+    openshift_console_url: OCP-PLACEHOLDER-URL.com
+    openshift_cluster_admin_username: admin
+    openshift_cluster_admin_password: pass
     page-links:
     - url: https://redhat.com
       text: Red Hat
