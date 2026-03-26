@@ -6,20 +6,20 @@ Congratulations on completing the llm-d workshop!
 
 == What you demonstrated
 
-You proved that **intelligent cache-aware routing reduces tail latency** for your most frustrated users:
+You proved that **intelligent cache-aware routing reduces tail latency** for your most frustrated users—using the same hardware and the same workload throughout:
 
-* **Single GPU baseline**: Established P95/P99 latency under realistic multi-turn workloads
-* **Naive 4 GPU scaling**: More capacity, but tail latency remained high due to cache misses
-* **llm-d with 4 GPUs**: Cache-aware routing dramatically improved P95/P99 latency
+* **Single GPU baseline**: Established P95/P99 TTFT under concurrent load using a KV-cache-aware prompts file
+* **Naive 4 GPU scaling**: 4x more throughput capacity, but P95 tail latency improved only marginally due to cache misses from random routing
+* **llm-d with 4 GPUs**: `prefix-cache-scorer` routing drove cache hit rates to 90%+, dramatically reducing P95/P99 TTFT
 
-The key insight: **more GPUs improve capacity, but intelligent routing improves customer experience**.
+The key insight: **more GPUs improve capacity, but intelligent cache-aware routing improves customer experience**.
 
 == When to use llm-d
 
 Prefix-aware routing with llm-d provides the most value when your workload has:
 
-* Shared prefixes (system prompts, common contexts)
-* Multi-turn conversations with context reuse
+* Repeated prompt prefixes (system prompts, shared documents, common contexts)
+* High concurrency where cache reuse matters at scale
 * Tail latency requirements that matter for customer experience
 
 == Continue learning
@@ -28,8 +28,7 @@ Explore these resources to deepen your understanding:
 
 * **https://llm-d.ai/[llm-d project]** - Official documentation and community
 * **https://github.com/vllm-project/vllm[vLLM]** - The inference engine powering the backends
-* **https://github.com/vllm-project/guidellm/tree/main/docs[GuideLLM documentation]** - Benchmarking tool for LLM inference
-* **https://github.com/rh-aiservices-bu/multi-turn-benchmarking[Multi-turn benchmarking tool]** - The custom benchmark used in this workshop
+* **https://github.com/vllm-project/guidellm/tree/main/docs[GuideLLM documentation]** - The benchmarking tool used in this workshop
 
 == Feedback
 

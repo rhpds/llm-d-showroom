@@ -5,7 +5,7 @@
 
 toc::[]
 
-Welcome to the llm-d workshop! In the next 2 hours, you'll gain hands-on experience with production-ready distributed LLM inference that dramatically improves tail latency—the experience your most frustrated users see.
+Welcome to the llm-d workshop! In the next 90 minutes you'll gain hands-on experience with production-ready distributed LLM inference that dramatically improves tail latency—the experience your most frustrated users see.
 
 == Prerequisites
 
@@ -34,6 +34,14 @@ You have been provided with an OpenShift cluster for this workshop. Use the foll
 Open the OpenShift web console in your browser:
 
 * **Console URL:** link:{openshift_console_url}[{openshift_console_url},window=_blank]
+* **Username:** {openshift_cluster_admin_username}
+* **Password:** {openshift_cluster_admin_password}
+
+=== OpenShift AI dashboard
+
+Open the OpenShift AI Dashboard in your browser:
+
+* **RHOAI URL:** link:https://data-science-gateway.{openshift_cluster_ingress_domain}[https://data-science-gateway.{openshift_cluster_ingress_domain},window=_blank]
 * **Username:** {openshift_cluster_admin_username}
 * **Password:** {openshift_cluster_admin_password}
 
@@ -82,7 +90,7 @@ By the end of this workshop, you'll be able to:
 
 * **Deploy and benchmark LLM inference** using vLLM, KServe, and OpenShift AI
 * **Measure tail latency scientifically** with benchmarking tools (P95, P99, TTFT)
-* **Identify latency bottlenecks** - prefill queuing, KV cache misses, multi-turn chat inefficiency
+* **Identify latency bottlenecks** - prefill queuing, KV cache misses, queue depth variability
 * **Compare scaling strategies** - naive horizontal scaling vs. intelligent cache-aware routing
 * **Deploy llm-d** with Precise Prefix Cache Aware Routing
 * **Quantify customer experience improvements** - connect P95/P99 reductions to user satisfaction
@@ -90,7 +98,7 @@ By the end of this workshop, you'll be able to:
 
 == Workshop modules
 
-**Total duration**: 105 minutes (~2 hours)
+**Total duration**: 80 minutes 
 
 === Module 1: Deploy Model & Core Concepts (20 minutes)
 
@@ -104,29 +112,27 @@ Deploy your first model and understand what causes tail latency:
 
 **Outcome**: Working model deployment.
 
-=== Module 2: Benchmark & Establish Baseline (25 minutes)
+=== Module 2: Observe Single-GPU Behaviour (20 minutes)
 
-Establish your tail latency baseline:
+See what happens when a single GPU gets overloaded:
 
-* Configure Grafana dashboard for real-time latency metrics
-* Run GuideLLM benchmarks to measure TTFT and latency
-* Run custom multi-turn benchmarks simulating realistic workloads
-* Measure P50, P95, P99 latency under load
+* Explore the vLLM Prometheus metrics endpoint and Grafana dashboard
+* Run a short 30-second GuideLLM benchmark to observe queue saturation
+* Note: these results are illustrative only—not used for comparison
 
-**Outcome**: Baseline showing where tail latency problems emerge under realistic conditions.
+**Outcome**: Understanding of how a single GPU saturates under concurrent load.
 
-=== Module 3: Scale vLLM & Compare Performance (25 minutes)
+=== Module 3: Scale vLLM & Establish Comparison Baseline (20 minutes)
 
-Discover why naive scaling doesn't fix tail latency:
+Scale to 4 replicas and run the proper comparison benchmark:
 
-* Deploy vLLM with 4 replicas (1 per GPU) using InferenceService
-* Observe random load balancing with isolated KV caches
-* Run the same benchmark and compare P95/P99 latency
-* Compare P95/P99 latency: Does adding GPUs help your worst-case users?
+* Deploy vLLM with 4 replicas using a standard ClusterIP load balancer
+* Run a full 300-second GuideLLM benchmark and record P95 TTFT
+* Observe that random routing keeps KV cache hit rates low despite 4x more hardware
 
-**Outcome**: Understanding that more GPUs ≠ better P95/P99 (isolated caches = wasted prefill work).
+**Outcome**: Recorded P95 TTFT baseline numbers to compare directly against Module 4.
 
-=== Module 4: Deploy llm-d & Benchmark (35 minutes)
+=== Module 4: Deploy llm-d & Benchmark (20 minutes)
 
 Fix tail latency with intelligent cache-aware routing:
 
@@ -175,7 +181,7 @@ Absolutely. llm-d is production-ready, and you'll leave with:
 
 **"What if my workload is different from the customer service example?"**
 
-The principles apply broadly. Module 4 includes exercises testing different workload patterns (high prefix similarity, low similarity, mixed). You'll understand when llm-d provides high value vs. moderate value.
+The principles apply broadly to any workload with repeated prompt prefixes (system prompts, shared documents, common contexts). You'll leave with an understanding of when llm-d provides high value vs. moderate value.
 
 == Ready to begin?
 

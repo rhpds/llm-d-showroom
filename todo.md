@@ -1,1 +1,4 @@
-Provide model tokenizer to guidellm.
+- [x] Provide model tokenizer to guidellm (done: GUIDELLM_PROCESSOR=RedHatAI/Meta-Llama-3.1-8B-Instruct-FP8-dynamic in all benchmark jobs)
+- [ ] Pre-provision benchmark-data PVC with prompts.csv in the lab cluster setup (needed for all three guidellm jobs)
+- [ ] Update example output in modules 2/3/4 with actual benchmark numbers from a real run
+- [ ] Update Grafana dashboard screenshots (benchmark-dashboard-single.png, benchmark-dashboard-scaled.png, benchmark-dashboard-llm-d.png) to match guidellm output format
