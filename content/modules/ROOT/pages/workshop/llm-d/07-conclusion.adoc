@@ -28,7 +28,7 @@ Explore these resources to deepen your understanding:
 
 * **https://llm-d.ai/[llm-d project]** - Official documentation and community
 * **https://github.com/vllm-project/vllm[vLLM]** - The inference engine powering the backends
-* **https://github.com/vllm-project/guidellm/tree/main/docs[GuideLLM documentation]** - The benchmarking tool used in this workshop
+* **https://github.com/vllm-project/guidellm/tree/v0.6.0/docs[GuideLLM documentation]** - The benchmarking tool used in this workshop
 
 == Feedback
 

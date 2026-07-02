@@ -285,7 +285,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: guidellm
-          image: ghcr.io/vllm-project/guidellm:latest
+          image: ghcr.io/vllm-project/guidellm:v0.6.0
           env:
             - name: GUIDELLM_TARGET
               value: "http://openshift-ai-inference-openshift-default.openshift-ingress.svc.cluster.local/llm-d-project/llama-llm-d/v1"
