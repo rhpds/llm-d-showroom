@@ -219,6 +219,8 @@ You may want to press `Enter` occasionally to prevent the Showroom environment f
 [.console-input]
 [source,bash]
 ----
+oc delete job guidellm-vllm-scaled --ignore-not-found
+
 cat << 'EOF' | oc apply -f-
 apiVersion: batch/v1
 kind: Job
@@ -226,6 +228,7 @@ metadata:
   name: guidellm-vllm-scaled
 spec:
   backoffLimit: 0
+  activeDeadlineSeconds: 1200
   ttlSecondsAfterFinished: 86400
   template:
     spec:

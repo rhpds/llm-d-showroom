@@ -112,6 +112,8 @@ The goal here is simply to observe what happens when one GPU gets overloaded.
 [.console-input]
 [source,bash]
 ----
+oc delete job guidellm-vllm-single --ignore-not-found
+
 cat << 'EOF' | oc apply -f-
 apiVersion: batch/v1
 kind: Job
@@ -119,6 +121,7 @@ metadata:
   name: guidellm-vllm-single
 spec:
   backoffLimit: 0
+  activeDeadlineSeconds: 600
   ttlSecondsAfterFinished: 86400
   template:
     spec:
