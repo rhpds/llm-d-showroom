@@ -27,6 +27,9 @@ First, remove your single-GPU deployment:
 [.console-input]
 [source,bash]
 ----
+# Make sure you're working in the lab namespace
+oc project llm-d-project
+
 # Delete previous InferenceService
 oc delete inferenceservice llama-vllm-single
 ----
@@ -51,6 +54,7 @@ apiVersion: serving.kserve.io/v1beta1
 kind: InferenceService
 metadata:
   name: llama-vllm-scaled
+  namespace: llm-d-project
   annotations:
     openshift.io/display-name: Llama 3.1 8B FP8 Scaled
     security.opendatahub.io/enable-auth: "false"
@@ -171,6 +175,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: llama-vllm-scaled-lb
+  namespace: llm-d-project
 spec:
   type: ClusterIP
   selector:
@@ -226,6 +231,7 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: guidellm-vllm-scaled
+  namespace: llm-d-project
 spec:
   backoffLimit: 0
   activeDeadlineSeconds: 1200
