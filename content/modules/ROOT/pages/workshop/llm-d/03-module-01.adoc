@@ -76,6 +76,7 @@ metadata:
   labels:
     opendatahub.io/dashboard: "true"
   name: rhaiis-cuda
+  namespace: llm-d-project
 spec:
   annotations:
     prometheus.io/path: /metrics
@@ -122,6 +123,7 @@ apiVersion: serving.kserve.io/v1beta1
 kind: InferenceService
 metadata:
   name: llama-vllm-single
+  namespace: llm-d-project
   annotations:
     openshift.io/display-name: Llama 3.1 8B FP8 Single
     security.opendatahub.io/enable-auth: "false"

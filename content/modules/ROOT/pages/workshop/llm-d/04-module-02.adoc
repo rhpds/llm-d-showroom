@@ -35,6 +35,9 @@ Your port-forward from Module 1 should still be running. If it's no longer activ
 [.console-input]
 [source,bash]
 ----
+# Make sure you're working in the lab namespace
+oc project llm-d-project
+
 # Fetch metrics
 curl http://localhost:8000/metrics | grep vllm | head -40
 ----
@@ -119,6 +122,7 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: guidellm-vllm-single
+  namespace: llm-d-project
 spec:
   backoffLimit: 0
   activeDeadlineSeconds: 600

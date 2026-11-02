@@ -22,6 +22,9 @@ First, remove your inference service deployment, because llm-d will manage the v
 [.console-input]
 [source,bash]
 ----
+# Make sure you're working in the lab namespace
+oc project llm-d-project
+
 # Delete previous InferenceService
 oc delete inferenceservice llama-vllm-scaled
 
@@ -32,6 +35,7 @@ oc get inferenceservice
 === Create Gateway Object
 
 First of all a GatewayClass and a Gateway for the inference service should be created.
+The `networking.istio.io/service-type: ClusterIP` annotation keeps the Gateway internal to the cluster, so no internet-facing load balancer is created; the benchmark Job reaches it through its in-cluster service address.
 
 [.console-input]
 [source,bash]
@@ -50,6 +54,8 @@ kind: Gateway
 metadata:
   name: openshift-ai-inference
   namespace: openshift-ingress
+  annotations:
+    networking.istio.io/service-type: ClusterIP
 spec:
   gatewayClassName: openshift-default
   listeners:
@@ -74,6 +80,7 @@ apiVersion: serving.kserve.io/v1alpha1
 kind: LLMInferenceService
 metadata:
   name: llama-llm-d
+  namespace: llm-d-project
   annotations:
     opendatahub.io/model-type: generative
     openshift.io/display-name: llama-llm-d
@@ -201,17 +208,25 @@ image::llm-d-topology.png[]
 
 === Verify llm-d is running
 
-Once the LLMInferenceService shows `Ready`, get the inference URL:
+Once the LLMInferenceService shows `Ready`, port-forward to the internal Gateway and send a test request through it:
 
 [.console-input]
 [source,bash]
 ----
-# Get the llm-d inference URL
-LLMD_URL=$(oc get llminferenceservice llama-llm-d -o jsonpath='{.status.url}')
-echo "llm-d URL: ${LLMD_URL}"
+# Port forward to the llm-d Gateway
+oc port-forward -n openshift-ingress svc/openshift-ai-inference-openshift-default 8080:80 &
+----
 
-# Test with a simple request
-curl ${LLMD_URL}/v1/completions \
+[NOTE]
+====
+Press **Enter** to get back to the command prompt after starting the port-forward.
+====
+
+[.console-input]
+[source,bash]
+----
+# Test with a simple request through the Gateway
+curl http://localhost:8080/llm-d-project/llama-llm-d/v1/completions \
   -H "Content-Type: application/json" \
   -d '{
     "model": "llama-3-1-8b-instruct-fp8",
@@ -279,6 +294,7 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: guidellm-llm-d
+  namespace: llm-d-project
 spec:
   backoffLimit: 0
   activeDeadlineSeconds: 1200
